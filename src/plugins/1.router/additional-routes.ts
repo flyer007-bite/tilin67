@@ -10,8 +10,14 @@ export const redirects: RouteRecordRaw[] = [
     path: '/',
     name: 'index',
     redirect: to => {
-      // TODO: Get type from backend
       const userData = useCookie<Record<string, unknown> | null | undefined>('userData')
+      const accessToken = useCookie('accessToken').value || localStorage.getItem('accessToken')
+
+      // Si no hay token ni datos de usuario, redirigir directamente al login
+      if (!accessToken || !userData.value) {
+        return { name: 'login', query: to.query }
+      }
+
       const userRole = userData.value?.role
 
       if (userRole === 'admin')
@@ -19,6 +25,7 @@ export const redirects: RouteRecordRaw[] = [
       if (userRole === 'client')
         return { name: 'access-control' }
 
+      // Si tiene sesión activa pero el rol es genérico, ir a la raíz o login
       return { name: 'login', query: to.query }
     },
   },
@@ -52,7 +59,6 @@ export const routes: RouteRecordRaw[] = [
     name: 'apps-email-label',
     component: emailRouteComponent,
     meta: {
-      // contentClass: 'email-application',
       navActiveLink: 'apps-email',
       layoutWrapperClasses: 'layout-content-height-fixed',
     },

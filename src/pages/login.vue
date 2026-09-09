@@ -1,6 +1,7 @@
 <!-- ❗Errors in the form are set on line 60 -->
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { VForm } from 'vuetify/components/VForm'
 import AuthProvider from '@/views/pages/authentication/AuthProvider.vue'
 import { useGenerateImageVariant } from '@core/composable/useGenerateImageVariant'
@@ -14,7 +15,6 @@ import { VNodeRenderer } from '@layouts/components/VNodeRenderer'
 import { themeConfig } from '@themeConfig'
 
 const authThemeImg = useGenerateImageVariant(authV2LoginIllustrationLight, authV2LoginIllustrationDark, authV2LoginIllustrationBorderedLight, authV2LoginIllustrationBorderedDark, true)
-
 const authThemeMask = useGenerateImageVariant(authV2MaskLight, authV2MaskDark)
 
 definePage({
@@ -25,10 +25,8 @@ definePage({
 })
 
 const isPasswordVisible = ref(false)
-
 const route = useRoute()
 const router = useRouter()
-
 const ability = useAbility()
 
 const errors = ref<Record<string, string | undefined>>({
@@ -36,11 +34,13 @@ const errors = ref<Record<string, string | undefined>>({
   password: undefined,
 })
 
+const generalError = ref<string | null>(null)
 const refVForm = ref<VForm>()
 
+// Credenciales por defecto enviadas al backend
 const credentials = ref({
-  email: 'admin@demo.com',
-  password: 'admin',
+  email: '',
+  password: '',
 })
 
 const rememberMe = ref(false)
@@ -82,7 +82,6 @@ const handleCredentialResponse = async (response: any) => {
   const googleUser = parseJwt(idToken)
 
   if (googleUser) {
-    // Definimos el objeto del usuario usando sus datos reales de Google
     const userData = {
       id: googleUser.sub,
       fullName: googleUser.name,
@@ -92,7 +91,6 @@ const handleCredentialResponse = async (response: any) => {
       role: 'admin',
     }
 
-    // Reglas de acceso globales (CASL)
     const userAbilityRules = [
       {
         action: 'manage',
@@ -100,13 +98,15 @@ const handleCredentialResponse = async (response: any) => {
       },
     ]
 
-    // Guardamos la sesión en las cookies de Vuexy
     useCookie('userData').value = userData
     useCookie('userAbilityRules').value = userAbilityRules
     useCookie('accessToken').value = idToken
+
+    localStorage.setItem('accessToken', idToken)
+    localStorage.setItem('userData', JSON.stringify(userData))
+
     ability.update(userAbilityRules)
 
-    // Redirigimos al Dashboard principal
     await nextTick(() => {
       router.replace(route.query.to ? String(route.query.to) : '/')
     })
@@ -136,33 +136,50 @@ onMounted(() => {
 
 const login = async () => {
   try {
-    const res = await $api('/auth/login', {
+    errors.value = { email: undefined, password: undefined }
+    generalError.value = null
+
+    // Conexión directa a Express en el puerto 4000
+    const response = await fetch('http://localhost:4000/auth/login', {
       method: 'POST',
-      body: {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         email: credentials.value.email,
         password: credentials.value.password,
-      },
-      onResponseError({ response }) {
-        errors.value = response._data.errors
-      },
+      }),
     })
 
-    const { accessToken, userData, userAbilityRules } = res
+    const data = await response.json()
 
-    useCookie('userAbilityRules').value = userAbilityRules
-    ability.update(userAbilityRules)
+    if (!response.ok) {
+      generalError.value = data.message || 'Credenciales inválidas'
+      return
+    }
 
+    const { accessToken, userData, userAbilityRules } = data
+
+    // Si la BD no trae permisos aún, otorgar acceso libre inicial
+    const rulesToApply = (userAbilityRules && userAbilityRules.length > 0)
+      ? userAbilityRules
+      : [{ action: 'manage', subject: 'all' }]
+
+    useCookie('userAbilityRules').value = rulesToApply
     useCookie('userData').value = userData
     useCookie('accessToken').value = accessToken
 
-    // Redirect to `to` query if exist or redirect to index route
-    // ❗ nextTick is required to wait for DOM updates and later redirect
+    localStorage.setItem('accessToken', accessToken)
+    localStorage.setItem('userData', JSON.stringify(userData))
+
+    ability.update(rulesToApply)
+
     await nextTick(() => {
       router.replace(route.query.to ? String(route.query.to) : '/')
     })
-  }
-  catch (err) {
-    console.error(err)
+  } catch (err: any) {
+    console.error('Error al conectar con el backend:', err)
+    generalError.value = 'No se pudo conectar con el servidor backend (Puerto 4000).'
   }
 }
 
@@ -227,25 +244,25 @@ const onSubmit = () => {
       >
         <VCardText>
           <h4 class="text-h4 mb-1">
-            Welcome to <span class="text-capitalize"> {{ themeConfig.app.title }} </span>! 👋🏻
+            Bienvenido a <span class="text-capitalize"> {{ themeConfig.app.title }} </span>! 👋🏻
           </h4>
           <p class="mb-0">
-            Please sign-in to your account and start the adventure
+            Ingresa tus credenciales para acceder al sistema
           </p>
         </VCardText>
-        <VCardText>
+
+        <!-- Alerta de Error General si falla la BD o el Servidor -->
+        <VCardText v-if="generalError">
           <VAlert
-            color="primary"
+            color="error"
             variant="tonal"
+            closable
+            @click:close="generalError = null"
           >
-            <p class="text-sm mb-2">
-              Admin Email: <strong>admin@demo.com</strong> / Pass: <strong>admin</strong>
-            </p>
-            <p class="text-sm mb-0">
-              Client Email: <strong>client@demo.com</strong> / Pass: <strong>client</strong>
-            </p>
+            {{ generalError }}
           </VAlert>
         </VCardText>
+
         <VCardText>
           <VForm
             ref="refVForm"
@@ -257,7 +274,7 @@ const onSubmit = () => {
                 <AppTextField
                   v-model="credentials.email"
                   label="Email"
-                  placeholder="johndoe@email.com"
+                  placeholder="usuario@ejemplo.com"
                   type="email"
                   autofocus
                   :rules="[requiredValidator, emailValidator]"
@@ -269,11 +286,11 @@ const onSubmit = () => {
               <VCol cols="12">
                 <AppTextField
                   v-model="credentials.password"
-                  label="Password"
+                  label="Contraseña"
                   placeholder="············"
                   :rules="[requiredValidator]"
                   :type="isPasswordVisible ? 'text' : 'password'"
-                  autocomplete="password"
+                  autocomplete="current-password"
                   :error-messages="errors.password"
                   :append-inner-icon="isPasswordVisible ? 'tabler-eye-off' : 'tabler-eye'"
                   @click:append-inner="isPasswordVisible = !isPasswordVisible"
@@ -282,13 +299,13 @@ const onSubmit = () => {
                 <div class="d-flex align-center flex-wrap justify-space-between my-6">
                   <VCheckbox
                     v-model="rememberMe"
-                    label="Remember me"
+                    label="Recordarme"
                   />
                   <RouterLink
                     class="text-primary ms-2 mb-1"
                     :to="{ name: 'forgot-password' }"
                   >
-                    Forgot Password?
+                    ¿Olvidaste tu contraseña?
                   </RouterLink>
                 </div>
 
@@ -296,7 +313,7 @@ const onSubmit = () => {
                   block
                   type="submit"
                 >
-                  Login
+                  Iniciar Sesión
                 </VBtn>
               </VCol>
 
@@ -305,24 +322,25 @@ const onSubmit = () => {
                 cols="12"
                 class="text-center"
               >
-                <span>New on our platform?</span>
+                <span>¿Nuevo en la plataforma?</span>
                 <RouterLink
                   class="text-primary ms-1"
                   :to="{ name: 'register' }"
                 >
-                  Create an account
+                  Crear una cuenta
                 </RouterLink>
               </VCol>
+              
               <VCol
                 cols="12"
                 class="d-flex align-center"
               >
                 <VDivider />
-                <span class="mx-4">or</span>
+                <span class="mx-4">o</span>
                 <VDivider />
               </VCol>
 
-              <!-- Botón oficial de Google Renderizado -->
+              <!-- Botón oficial de Google -->
               <VCol
                 cols="12"
                 class="d-flex justify-center"

@@ -12,7 +12,7 @@ export const { themeConfig, layoutConfig } = defineThemeConfig({
   app: {
     title: 'vuexy',
     logo: h('div', { innerHTML: logo, style: 'line-height:0; color: rgb(var(--v-global-theme-primary))' }),
-    contentWidth: ContentWidth.Boxed,
+    contentWidth: ContentWidth.Fluid,
     contentLayoutNav: AppContentLayoutNav.Vertical,
     overlayNavFromBreakpoint: breakpointsVuetifyV3.lg - 1, // 1 for matching with vuetify breakpoint. Docs: https://next.vuetifyjs.com/en/features/display-and-platform/
     
@@ -32,14 +32,9 @@ export const { themeConfig, layoutConfig } = defineThemeConfig({
           i18nLang: 'fr',
           isRTL: false,
         },
-        {
-          label: 'Arabic',
-          i18nLang: 'ar',
-          isRTL: true,
-        },
       ],
     },
-    theme: 'system',
+    theme: 'light',
     skin: Skins.Default,
     iconRenderer: VIcon,
   },
@@ -60,7 +55,7 @@ export const { themeConfig, layoutConfig } = defineThemeConfig({
   },
 
   /*
-  // ℹ️  In below Icons section, you can specify icon for each component. Also you can use other props of v-icon component like `color` and `size` for each icon.
+  // ℹ️  In below Icons section, you can specify icon for each component. Also you can use other props of v-icon component like color and size for each icon.
   // Such as: chevronDown: { icon: 'tabler-chevron-down', color:'primary', size: '24' },
   */
   icons: {

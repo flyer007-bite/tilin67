@@ -2,9 +2,11 @@
 import { Request, Response } from 'express'
 import { db } from '../config/db'
 import { RowDataPacket, ResultSetHeader } from 'mysql2'
+import { idPositivo, montoValido, textoSeguro } from '../utils/validacion'
+import type { AuthenticatedRequest } from '../middlewares/auth.middleware'
 
 export const crearIngreso = async (
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   const {
@@ -17,27 +19,23 @@ export const crearIngreso = async (
     observaciones,
   } = req.body
 
-  // Validar campos obligatorios
-  if (!fondo_id || !usuario_id || !monto || !tipo_ingreso || !descripcion) {
+  const fondoId = idPositivo(fondo_id)
+  // La autoría del ingreso siempre es la del usuario autenticado.
+  const usuarioId = req.user?.id
+  const montoSeguro = montoValido(monto)
+  const tipoIngreso = textoSeguro(tipo_ingreso, 100)
+  const descripcionSegura = textoSeguro(descripcion, 500)
+  const observacionesSeguras = observaciones == null || observaciones === '' ? null : textoSeguro(observaciones, 5000)
+  const documentoSeguro = documento_asociado_url == null || documento_asociado_url === '' ? null : textoSeguro(documento_asociado_url, 500)
+
+  if (!fondoId || !usuarioId || !montoSeguro || !tipoIngreso || !descripcionSegura || (observaciones != null && observaciones !== '' && !observacionesSeguras) || (documento_asociado_url != null && documento_asociado_url !== '' && !documentoSeguro)) {
     res.status(400).json({
-      message:
-        'Los campos fondo_id, usuario_id, monto, tipo_ingreso y descripcion son obligatorios.',
+      message: 'No se puede ingresar esa información. Ingresa un monto mayor a Q 0.00, con máximo dos decimales, y respeta los límites de texto solicitados.',
     })
     return
   }
 
   try {
-    // Convertir usuario_id a número
-    const parsedId = Number(usuario_id)
-
-    const validUsuarioId =
-      !isNaN(parsedId) &&
-      Number.isInteger(parsedId) &&
-      parsedId > 0 &&
-      parsedId < 2147483647
-        ? parsedId
-        : 1
-
     // Crear ingreso
     const [ingresoResult] = await db.query<ResultSetHeader>(
       `INSERT INTO ingresos
@@ -52,13 +50,13 @@ export const crearIngreso = async (
         )
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        fondo_id,
-        validUsuarioId,
-        monto,
-        tipo_ingreso,
-        descripcion,
-        documento_asociado_url || null,
-        observaciones || null,
+        fondoId,
+        usuarioId,
+        montoSeguro,
+        tipoIngreso,
+        descripcionSegura,
+        documentoSeguro,
+        observacionesSeguras,
       ]
     )
 
@@ -80,9 +78,9 @@ export const crearIngreso = async (
       [
         fondo_id,
         ingresoId,
-        `Ingreso: ${tipo_ingreso} - ${descripcion}`,
-        monto,
-        validUsuarioId,
+        `Ingreso: ${tipoIngreso} - ${descripcionSegura}`,
+        montoSeguro,
+        usuarioId,
       ]
     )
 
@@ -179,4 +177,3 @@ export const eliminarIngreso = async (
     })
   }
 }
-

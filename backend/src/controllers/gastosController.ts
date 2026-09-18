@@ -1,9 +1,11 @@
 import { Request, Response } from 'express'
 import { db } from '../config/db'
 import { RowDataPacket, ResultSetHeader } from 'mysql2'
+import { fechaValida, idPositivo, montoValido, textoSeguro } from '../utils/validacion'
+import type { AuthenticatedRequest } from '../middlewares/auth.middleware'
 
 export const crearGasto = async (
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
   const {
@@ -14,6 +16,7 @@ export const crearGasto = async (
     fecha_comprobante,
     proveedor_id,
     persona_realizo_gasto_id,
+    persona_realizo_gasto_nombre,
     usuario_registro_id,
     monto,
     motivo_gasto,
@@ -22,20 +25,25 @@ export const crearGasto = async (
     tipo_gasto_id,
   } = req.body
 
-  if (
-    !fondo_id ||
-    !tipo_comprobante_id ||
-    !numero_comprobante ||
-    !fecha_comprobante ||
-    !proveedor_id ||
-    !persona_realizo_gasto_id ||
-    !usuario_registro_id ||
-    !monto ||
-    !motivo_gasto ||
-    !tipo_gasto_id
-  ) {
+  const fondoId = idPositivo(fondo_id)
+  const tipoComprobanteId = idPositivo(tipo_comprobante_id)
+  const proveedorId = idPositivo(proveedor_id)
+  const personaId = idPositivo(persona_realizo_gasto_id)
+  // Quien registra se obtiene de la sesión; el navegador no puede elegirlo.
+  const usuarioId = req.user?.id
+  const tipoGastoId = idPositivo(tipo_gasto_id)
+  const numeroComprobante = textoSeguro(String(numero_comprobante ?? ''), 100)
+  const fechaComprobante = fechaValida(fecha_comprobante)
+  const personaNombre = textoSeguro(persona_realizo_gasto_nombre, 150)
+  const montoSeguro = montoValido(monto)
+  const motivo = textoSeguro(motivo_gasto, 500)
+  const serie = serie_comprobante == null || serie_comprobante === '' ? null : textoSeguro(serie_comprobante, 50)
+  const observacion = observaciones == null || observaciones === '' ? null : textoSeguro(observaciones, 5000)
+  const documento = documento_url == null || documento_url === '' ? null : textoSeguro(documento_url, 500)
+
+  if (!fondoId || !tipoComprobanteId || !numeroComprobante || !fechaComprobante || !proveedorId || !personaId || !personaNombre || !usuarioId || !montoSeguro || !motivo || !tipoGastoId || (serie_comprobante != null && serie_comprobante !== '' && !serie) || (observaciones != null && observaciones !== '' && !observacion) || (documento_url != null && documento_url !== '' && !documento)) {
     res.status(400).json({
-      message: 'Faltan campos obligatorios para registrar el gasto.',
+      message: 'No se puede ingresar esa información. Ingresa un monto mayor a Q 0.00, con máximo dos decimales, y completa los campos solicitados dentro de sus límites.',
     })
     return
   }
@@ -58,6 +66,7 @@ export const crearGasto = async (
         fecha_comprobante,
         proveedor_id,
         persona_realizo_gasto_id,
+        persona_realizo_gasto_nombre,
         usuario_registro_id,
         monto,
         motivo_gasto,
@@ -68,25 +77,26 @@ export const crearGasto = async (
         anio
       )
       VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente',
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente',
         MONTH(?),
         YEAR(?)
       )`,
       [
-        fondo_id,
-        tipo_comprobante_id,
-        serie_comprobante || null,
-        numero_comprobante,
-        fecha_comprobante,
-        proveedor_id,
-        persona_realizo_gasto_id,
-        usuario_registro_id,
-        Number(monto),
-        motivo_gasto,
-        observaciones || null,
-        documento_url || null,
-        fecha_comprobante,
-        fecha_comprobante,
+        fondoId,
+        tipoComprobanteId,
+        serie,
+        numeroComprobante,
+        fechaComprobante,
+        proveedorId,
+        personaId,
+        personaNombre,
+        usuarioId,
+        montoSeguro,
+        motivo,
+        observacion,
+        documento,
+        fechaComprobante,
+        fechaComprobante,
       ]
     )
 
@@ -104,7 +114,7 @@ export const crearGasto = async (
       VALUES (?, ?)`,
       [
         gastoId,
-        tipo_gasto_id,
+        tipoGastoId,
       ]
     )
 
@@ -134,9 +144,9 @@ export const crearGasto = async (
       [
         fondo_id,
         gastoId,
-        `Gasto: ${motivo_gasto}`,
-        Number(monto),
-        usuario_registro_id,
+        `Gasto: ${motivo}`,
+        montoSeguro,
+        usuarioId,
       ]
     )
 
@@ -211,7 +221,7 @@ export const obtenerGastos = async (
         p.nit AS proveedor_nit,
 
         g.persona_realizo_gasto_id,
-        u1.nombre_completo AS persona_realizo_gasto,
+        COALESCE(NULLIF(g.persona_realizo_gasto_nombre, ''), u1.nombre_completo) AS persona_realizo_gasto,
 
         g.usuario_registro_id,
         u2.nombre_completo AS usuario_registro,
@@ -309,6 +319,51 @@ export const obtenerGastos = async (
       message: 'Error al consultar los gastos.',
       detalles: error.sqlMessage || error.message,
     })
+  }
+}
+
+// Personas disponibles para indicar quién realizó el gasto.
+export const obtenerUsuariosGasto = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const [rows] = await db.query<RowDataPacket[]>(
+      'SELECT id, nombre_completo FROM usuarios ORDER BY nombre_completo'
+    )
+    res.json(rows)
+  } catch (error: any) {
+    res.status(500).json({ message: 'No se pudieron obtener los usuarios.', detalles: error.message })
+  }
+}
+
+// Aprobar o rechazar un gasto pendiente.
+export const cambiarEstadoGasto = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const id = Number(req.params.id)
+  const { estado } = req.body
+  const usuarioId = req.user?.id
+
+  if (!Number.isInteger(id) || !usuarioId || !['aprobado', 'rechazado'].includes(estado)) {
+    res.status(400).json({ message: 'Solicitud de aprobación inválida.' })
+    return
+  }
+
+  try {
+    const [result] = await db.query<ResultSetHeader>(
+      `UPDATE gastos
+       SET estado = ?,
+           aprobado_por = CASE WHEN ? = 'aprobado' THEN ? ELSE aprobado_por END,
+           aprobado_en = CASE WHEN ? = 'aprobado' THEN NOW() ELSE aprobado_en END,
+           revisado_por = ?, revisado_en = NOW()
+       WHERE id = ? AND estado IN ('pendiente', 'aprobado')`,
+      [estado, estado, usuarioId, estado, usuarioId, id],
+    )
+
+    if (!result.affectedRows) {
+      res.status(409).json({ message: 'El gasto no existe o ya fue rechazado.' })
+      return
+    }
+
+    res.json({ message: `Gasto ${estado} correctamente.` })
+  } catch (error: any) {
+    res.status(500).json({ message: 'No se pudo actualizar el gasto.', detalles: error.message })
   }
 }
 

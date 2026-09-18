@@ -1,7 +1,9 @@
 import { Router } from 'express'
 import { db } from '../config/db'
+import { bloquearConsultor, requerirAdministrador, requerirAutenticacion } from '../middlewares/auth.middleware'
 
 const router = Router()
+router.use(requerirAutenticacion)
 
 // GET: Obtener todos los tipos de gasto
 router.get('/', async (req, res) => {
@@ -15,7 +17,7 @@ router.get('/', async (req, res) => {
 })
 
 // POST: Crear un nuevo tipo de gasto
-router.post('/', async (req, res) => {
+router.post('/', bloquearConsultor, async (req, res) => {
   const { nombre, descripcion } = req.body
 
   if (!nombre) {
@@ -40,7 +42,7 @@ router.post('/', async (req, res) => {
 })
 
 // DELETE: Eliminar un tipo de gasto por ID
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requerirAdministrador, async (req, res) => {
   const { id } = req.params
 
   try {

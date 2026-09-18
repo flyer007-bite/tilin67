@@ -1,7 +1,6 @@
 /* stylelint-disable no-duplicate-selectors */
 /* stylelint-disable no-descending-specificity */
 @use "@core/scss/base/mixins";
-@use "@styles/variables/vuetify.scss";
 
 .calendar-add-event-drawer {
   .v-navigation-drawer__content {

@@ -212,7 +212,7 @@ onClickOutside(refAddNewBoard, hideAddNewForm)
 </template>
 
 <style lang="scss">
-@use "@styles/variables/_vuetify.scss" as vuetify;
+@use "@core/scss/template/libs/vuetify/variables" as vuetify;
 
 .kanban-main-wrapper {
   overflow: auto hidden;

@@ -8,20 +8,20 @@ const ability = useAbility()
 const userData = useCookie<any>('userData')
 
 const logout = async () => {
-  // Remover "accessToken" de las cookies
+  // Limpiar la sesión completa antes de navegar; de lo contrario el guardia
+  // puede interpretar que el usuario todavía sigue autenticado.
   useCookie('accessToken').value = null
-
-  // Remover "userData" de las cookies
   userData.value = null
-
-  // Redirigir al Login
-  await router.push('/login')
-
-  // Remover "userAbilityRules"
   useCookie('userAbilityRules').value = null
-
-  // Limpiar permisos de CASL
+  localStorage.removeItem('accessToken')
+  localStorage.removeItem('userData')
   ability.update([])
+
+  await router.replace({ name: 'login' })
+
+  // Fuerza la navegación si el router conserva la vista actual en memoria.
+  if (window.location.pathname !== '/login')
+    window.location.replace('/login')
 }
 
 // Opciones del menú adaptadas al sistema de Caja Chica (rutas seguras/existentes)

@@ -2,7 +2,7 @@
 @use "@layouts/styles/placeholders";
 @use "@layouts/styles/mixins" as layoutMixins;
 @use "@configured-variables" as variables;
-@use "@styles/variables/_vuetify.scss" as vuetify;
+@use "@core/scss/template/libs/vuetify/variables" as vuetify;
 
 // 👉 Avatar group
 .v-avatar-group {

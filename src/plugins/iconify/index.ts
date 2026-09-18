@@ -1,5 +1,6 @@
 
+import './icons.css'
 
 export default function () {
-  // This plugin just requires icons import
+  // La importación anterior registra el CSS generado de Iconify de forma global.
 }

@@ -1,6 +1,6 @@
 @use "shepherd.js/dist/css/shepherd.css";
 @use "@core/scss/base/mixins";
-@use "@styles/variables/_vuetify.scss" as variables;
+@use "@core/scss/template/libs/vuetify/variables" as variables;
 
 .shepherd-button {
   border-radius: variables.$button-border-radius;

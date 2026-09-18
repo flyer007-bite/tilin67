@@ -41,3 +41,7 @@ public/mockServiceWorker.js
 # Env files
 .env*
 !.env.example
+
+# Datos locales y credenciales de desarrollo
+credenciales-por-departamento.txt
+backups/

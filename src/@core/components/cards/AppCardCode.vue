@@ -126,7 +126,7 @@ const codeSnippet = computed(() =>
 </template>
 
 <style lang="scss">
-@use "@styles/variables/vuetify";
+@use "@core/scss/template/libs/vuetify/variables" as vuetify;
 
 code[class*="language-"],
 pre[class*="language-"] {

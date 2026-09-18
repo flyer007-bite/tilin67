@@ -2,10 +2,7 @@ import type { RouteRecordRaw } from 'vue-router/auto'
 
 const emailRouteComponent = () => import('@/pages/apps/email/index.vue')
 
-// 👉 Redirects
 export const redirects: RouteRecordRaw[] = [
-  // ℹ️ We are redirecting to different pages based on role.
-  // NOTE: Role is just for UI purposes. ACL is based on abilities.
   {
     path: '/',
     name: 'index',
@@ -13,20 +10,21 @@ export const redirects: RouteRecordRaw[] = [
       const userData = useCookie<Record<string, unknown> | null | undefined>('userData')
       const accessToken = useCookie('accessToken').value || localStorage.getItem('accessToken')
 
-      // Si no hay token ni datos de usuario, redirigir directamente al login
-      if (!accessToken || !userData.value) {
+      if (!accessToken || !userData.value)
         return { name: 'login', query: to.query }
-      }
 
       const userRole = userData.value?.role
 
-      if (userRole === 'admin')
+      if (userRole === 'admin' || userRole === 'administrador')
+        return { name: 'dashboards-crm' }
+      if (userRole === 'operador caja chica')
         return { name: 'dashboards-crm' }
       if (userRole === 'client')
         return { name: 'access-control' }
 
-      // Si tiene sesión activa pero el rol es genérico, ir a la raíz o login
-      return { name: 'login', query: to.query }
+      // Un usuario autenticado no debe volver al login solo porque su rol
+      // tenga un nombre distinto a los roles del template.
+      return { name: 'dashboards-crm' }
     },
   },
   {
@@ -42,7 +40,6 @@ export const redirects: RouteRecordRaw[] = [
 ]
 
 export const routes: RouteRecordRaw[] = [
-  // Email filter
   {
     path: '/apps/email/filter/:filter',
     name: 'apps-email-filter',
@@ -52,8 +49,6 @@ export const routes: RouteRecordRaw[] = [
       layoutWrapperClasses: 'layout-content-height-fixed',
     },
   },
-
-  // Email label
   {
     path: '/apps/email/label/:label',
     name: 'apps-email-label',
@@ -63,7 +58,6 @@ export const routes: RouteRecordRaw[] = [
       layoutWrapperClasses: 'layout-content-height-fixed',
     },
   },
-
   {
     path: '/dashboards/logistics',
     name: 'dashboards-logistics',

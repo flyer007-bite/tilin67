@@ -1,4 +1,4 @@
-@use "@styles/variables/_vuetify.scss" as vuetify;
+@use "@core/scss/template/libs/vuetify/variables" as vuetify;
 @use "@layouts/styles/mixins" as layoutsMixins;
 @use "@core/scss/base/mixins";
 

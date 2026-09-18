@@ -5,18 +5,21 @@ import pool from '../config/db';
 import { RowDataPacket } from 'mysql2';
 
 export const login = async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body;
+  const { email, password, empresa_id, departamento_id } = req.body;
 
-  if (!email || !password) {
-    res.status(400).json({ message: 'El correo y la contraseña son obligatorios' });
+  if (!email || !password || !empresa_id || !departamento_id) {
+    res.status(400).json({ message: 'Selecciona empresa, departamento, correo y contraseña.' });
     return;
   }
 
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT u.id, u.nombre_completo, u.email, u.password, u.estado, u.rol_id, r.nombre AS rol
+      `SELECT u.id, u.nombre_completo, u.email, u.password, u.rol_id, u.empresa_id, u.departamento_id,
+              r.nombre AS rol, e.nombre AS empresa, d.nombre AS departamento
        FROM usuarios u
        INNER JOIN roles r ON u.rol_id = r.id
+       INNER JOIN empresas e ON u.empresa_id = e.id
+       INNER JOIN departamentos d ON u.departamento_id = d.id AND d.empresa_id = u.empresa_id
        WHERE u.email = ?`,
       [email]
     );
@@ -28,8 +31,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     const usuario = rows[0];
 
-    if (!usuario.estado) {
-      res.status(403).json({ message: 'El usuario se encuentra inactivo' });
+    if (usuario.empresa_id !== String(empresa_id) || Number(usuario.departamento_id) !== Number(departamento_id)) {
+      res.status(401).json({ message: 'La empresa o el departamento no corresponden a esta cuenta.' });
       return;
     }
 
@@ -54,11 +57,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       subject: p.modulo,
     }));
 
-    // Actualizar registro de último acceso
-    await pool.query('UPDATE usuarios SET ultimo_acceso = NOW() WHERE id = ?', [usuario.id]);
-
     const accessToken = jwt.sign(
-      { id: usuario.id, email: usuario.email, rol: usuario.rol, rol_id: usuario.rol_id },
+      { id: usuario.id, email: usuario.email, rol: usuario.rol, rol_id: usuario.rol_id, empresa_id: usuario.empresa_id, departamento_id: usuario.departamento_id },
       process.env.JWT_SECRET || 'secret',
       { expiresIn: '24h' }
     );
@@ -69,6 +69,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       username: usuario.email.split('@')[0],
       email: usuario.email,
       role: usuario.rol.toLowerCase(),
+      empresaId: usuario.empresa_id,
+      empresa: usuario.empresa,
+      departamentoId: usuario.departamento_id,
+      departamento: usuario.departamento,
       abilityRules: userAbilityRules,
     };
 
@@ -87,5 +91,15 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('Error en login:', error);
     res.status(500).json({ message: 'Error interno del servidor' });
+  }
+};
+
+export const organizacionLogin = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const [empresas] = await pool.query<RowDataPacket[]>('SELECT id, nombre FROM empresas WHERE estado = 1 ORDER BY nombre');
+    const [departamentos] = await pool.query<RowDataPacket[]>('SELECT id, empresa_id, nombre FROM departamentos WHERE estado = 1 ORDER BY empresa_id, nombre');
+    res.json({ empresas, departamentos });
+  } catch {
+    res.status(500).json({ message: 'No se pudo cargar la organización.' });
   }
 };

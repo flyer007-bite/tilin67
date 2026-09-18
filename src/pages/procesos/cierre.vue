@@ -1,0 +1,9 @@
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'
+import { apiProcesos, solicitudId } from '@/utils/procesos'
+const fondos=ref<any[]>([]);const fondoId=ref<number|null>(null);const observaciones=ref('');const resumen=ref<any>(null);const error=ref('');const ok=ref('');const loading=ref(false)
+const consultar=async()=>{if(!fondoId.value)return;loading.value=true;try{resumen.value=await apiProcesos(`/resumen/${fondoId.value}`)}catch(e:any){error.value=e.message}finally{loading.value=false}}
+const cerrar=async()=>{if(!fondoId.value||!confirm('El fondo dejará de admitir movimientos. ¿Confirmar cierre?'))return;loading.value=true;try{const r=await apiProcesos('/cierre',{method:'POST',body:JSON.stringify({fondo_id:fondoId.value,solicitud_id:solicitudId(),observaciones:observaciones.value})});ok.value=`Cierre #${r.id} guardado.`}catch(e:any){error.value=e.message}finally{loading.value=false}}
+onMounted(async()=>{try{fondos.value=(await apiProcesos('/fondos')).filter((f:any)=>f.estado==='activo')}catch(e:any){error.value=e.message}})
+</script>
+<template><VCard><VCardItem><VCardTitle>Cierre de Caja</VCardTitle><VCardSubtitle>Requiere el último arqueo sin diferencias ni movimientos posteriores.</VCardSubtitle></VCardItem><VCardText><VAlert v-if="error" type="error" class="mb-3">{{error}}</VAlert><VAlert v-if="ok" type="success" class="mb-3">{{ok}}</VAlert><VSelect v-model="fondoId" :items="fondos" item-title="id" item-value="id" label="Fondo activo" @update:model-value="consultar"/><VCard v-if="resumen" variant="tonal" class="mb-4"><VCardText>Fondo a comprobar: Q{{Number(resumen.fondoComprobar/100).toFixed(2)}} · Saldo contable: Q{{Number(resumen.saldoLibros/100).toFixed(2)}}</VCardText></VCard><VTextarea v-model="observaciones" label="Observaciones"/><VBtn color="primary" :loading="loading" class="mt-3" @click="cerrar">Confirmar cierre</VBtn></VCardText></VCard></template>

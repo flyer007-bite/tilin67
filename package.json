@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --port 5050",
     "typecheck": "vue-tsc --noEmit",
@@ -34,6 +34,8 @@
     "destr": "2.0.5",
     "eslint-plugin-regexp": "2.7.0",
     "flatpickr": "^4.6.13",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "jwt-decode": "4.0.0",
     "mapbox-gl": "3.5.2",
     "ofetch": "1.4.1",
@@ -53,7 +55,8 @@
     "vue3-apexcharts": "1.8.0",
     "vue3-perfect-scrollbar": "2.0.0",
     "vuetify": "3.8.5",
-    "webfontloader": "1.6.28"
+    "webfontloader": "1.6.28",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@antfu/eslint-config-vue": "0.43.1",

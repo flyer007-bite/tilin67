@@ -46,7 +46,6 @@ import { VerticalNavLayout } from '@layouts'
       <Footer />
     </template>
 
-    <!-- Ajustes de apariencia -->
     <TheCustomizer />
   </VerticalNavLayout>
 </template>

@@ -33,10 +33,6 @@ export default defineConfig({
           .replace(/([a-z\d])([A-Z])/g, '$1-$2')
           .toLowerCase()
       },
-      beforeWriteFiles: root => {
-        root.insert('/apps/email/:filter', '/src/pages/apps/email/index.vue')
-        root.insert('/apps/email/:label', '/src/pages/apps/email/index.vue')
-      },
     }),
     vue({
       template: {
@@ -110,9 +106,8 @@ export default defineConfig({
       '@layouts': fileURLToPath(new URL('./src/@layouts', import.meta.url)),
       '@images': fileURLToPath(new URL('./src/assets/images/', import.meta.url)),
       '@styles': fileURLToPath(new URL('./src/assets/styles/', import.meta.url)),
+      '@validators': fileURLToPath(new URL('./src/@core/utils/validators.ts', import.meta.url)),
       '@configured-variables': fileURLToPath(new URL('./src/assets/styles/variables/_template.scss', import.meta.url)),
-      '@db': fileURLToPath(new URL('./src/plugins/fake-api/handlers/', import.meta.url)),
-      '@api-utils': fileURLToPath(new URL('./src/plugins/fake-api/utils/', import.meta.url)),
     },
   },
   build: {

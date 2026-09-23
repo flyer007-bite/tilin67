@@ -14,6 +14,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   isSubItem: false,
 })
+const router = useRouter()
 </script>
 
 <template>
@@ -28,12 +29,12 @@ const props = withDefaults(defineProps<Props>(), {
     <Component
       :is="item.to ? 'RouterLink' : 'a'"
       v-bind="getComputedNavLinkToProp(item)"
-      :class="{ 'router-link-active router-link-exact-active': isNavLinkActive(item, $router) }"
+      :class="{ 'router-link-active router-link-exact-active': isNavLinkActive(item, router) }"
     >
       <Component
         :is="layoutConfig.app.iconRenderer || 'div'"
         class="nav-item-icon"
-        v-bind="item.icon || layoutConfig.verticalNav.defaultNavItemIconProps"
+        v-bind="(item.icon || layoutConfig.verticalNav.defaultNavItemIconProps) as any"
       />
       <Component
         :is="layoutConfig.app.i18n.enable ? 'i18n-t' : 'span'"

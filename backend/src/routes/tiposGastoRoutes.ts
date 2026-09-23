@@ -1,12 +1,12 @@
 import { Router } from 'express'
 import { db } from '../config/db'
-import { bloquearConsultor, requerirAdministrador, requerirAutenticacion } from '../middlewares/auth.middleware'
+import { requerirAutenticacion, requerirPermiso } from '../middlewares/auth.middleware'
 
 const router = Router()
 router.use(requerirAutenticacion)
 
 // GET: Obtener todos los tipos de gasto
-router.get('/', async (req, res) => {
+router.get('/', requerirPermiso('tipos_gasto', 'ver'), async (_req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM tipos_gasto ORDER BY id DESC')
     res.json(rows)
@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 })
 
 // POST: Crear un nuevo tipo de gasto
-router.post('/', bloquearConsultor, async (req, res) => {
+router.post('/', requerirPermiso('tipos_gasto', 'crear'), async (req, res) => {
   const { nombre, descripcion } = req.body
 
   if (!nombre) {
@@ -42,7 +42,7 @@ router.post('/', bloquearConsultor, async (req, res) => {
 })
 
 // DELETE: Eliminar un tipo de gasto por ID
-router.delete('/:id', requerirAdministrador, async (req, res) => {
+router.delete('/:id', requerirPermiso('tipos_gasto', 'eliminar'), async (req, res) => {
   const { id } = req.params
 
   try {

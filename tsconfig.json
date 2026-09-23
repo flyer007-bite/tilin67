@@ -39,12 +39,6 @@
       ],
       "@validators": [
         "./src/@core/utils/validators"
-      ],
-      "@db/*": [
-        "./src/plugins/fake-api/handlers/*"
-      ],
-      "@api-utils/*": [
-        "./src/plugins/fake-api/utils/*"
       ]
     },
     "lib": [
@@ -73,6 +67,14 @@
   ],
   "exclude": [
     "./dist",
-    "./node_modules"
+    "./node_modules",
+    "./src/components/dialogs",
+    "./src/views",
+    "./src/@core/components/app-form-elements/AppDateTimePicker.vue",
+    "./src/@core/components/app-form-elements/CustomCheckboxesWithIcon.vue",
+    "./src/@core/components/app-form-elements/CustomRadiosWithIcon.vue",
+    "./src/@core/components/AppBarSearch.vue",
+    "./src/@core/components/Shortcuts.vue",
+    "./src/@core/components/TablePagination.vue"
   ]
 }

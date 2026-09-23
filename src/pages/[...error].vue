@@ -3,8 +3,10 @@ import { useGenerateImageVariant } from '@core/composable/useGenerateImageVarian
 import misc404 from '@images/pages/404.png'
 import miscMaskDark from '@images/pages/misc-mask-dark.png'
 import miscMaskLight from '@images/pages/misc-mask-light.png'
+import { useDisplay } from 'vuetify'
 
 const authThemeMask = useGenerateImageVariant(miscMaskLight, miscMaskDark)
+const { smAndDown } = useDisplay()
 
 definePage({
   alias: '/pages/misc/not-found/:error(.*)',
@@ -35,7 +37,7 @@ definePage({
       <VImg
         :src="misc404"
         alt="error 404"
-        :max-height="$vuetify.display.smAndDown ? 350 : 500"
+        :max-height="smAndDown ? 350 : 500"
         class="mx-auto"
       />
     </div>

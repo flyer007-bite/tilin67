@@ -2,6 +2,7 @@
 import pages401 from '@images/pages/401.png'
 import miscMaskDark from '@images/pages/misc-mask-dark.png'
 import miscMaskLight from '@images/pages/misc-mask-light.png'
+import { useDisplay } from 'vuetify'
 
 import { useGenerateImageVariant } from '@core/composable/useGenerateImageVariant'
 
@@ -14,6 +15,7 @@ definePage({
 })
 
 const authThemeMask = useGenerateImageVariant(miscMaskLight, miscMaskDark)
+const { smAndDown } = useDisplay()
 </script>
 
 <template>
@@ -36,7 +38,7 @@ const authThemeMask = useGenerateImageVariant(miscMaskLight, miscMaskDark)
       <VImg
         :src="pages401"
         alt="not autorized"
-        :max-height="$vuetify.display.smAndDown ? 350 : 500"
+        :max-height="smAndDown ? 350 : 500"
         class="mx-auto"
       />
     </div>

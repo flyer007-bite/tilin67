@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useTableNumbering } from '@/composables/useTableNumbering'
+import { $api } from '@/utils/api'
 
 interface Gasto {
   id: number
@@ -23,86 +25,61 @@ interface Gasto {
   mes: number
   anio: number
   creado_en: string
+  tipos_gasto?: string
 }
-
-interface Proveedor {
-  id: number
-  nombre: string
-  nit: string
-}
+interface Proveedor { id: number; nombre: string; nit: string }
+interface UsuarioGasto { id: number; nombre_completo: string }
+interface Fondo { id: number; mes: number; anio: number; monto_inicial: string | number; numero_cheque?: string }
+interface Catalogo { id: number; nombre: string }
+interface Rule { action: string; subject: string }
 
 const gastos = ref<Gasto[]>([])
+const { numberPage: pagina, numberPageSize, rowNumber } = useTableNumbering()
+const orden = ref<Array<{ key: string; order: 'asc' | 'desc' }>>([{ key: 'id', order: 'desc' }])
 const proveedores = ref<Proveedor[]>([])
-
+const usuarios = ref<UsuarioGasto[]>([])
+const fondos = ref<Fondo[]>([])
+const tiposComprobante = ref<Array<{ title: string; value: number }>>([])
+const tiposGasto = ref<Array<{ title: string; value: number }>>([])
 const loading = ref(false)
 const loadingProveedores = ref(false)
 const isDialogVisible = ref(false)
-
 const errorMessage = ref('')
 const successMessage = ref('')
-const esOperador = computed(() => {
-  try {
-    const role = String(JSON.parse(localStorage.getItem('userData') || '{}').role || '').toLowerCase()
-    return role === 'operador caja chica' || role.endsWith(' - usuario')
-  } catch {
-    return false
-  }
-})
+const facturaArchivo = ref<File | null>(null)
+const facturaVistaPrevia = ref('')
+const escaneandoFactura = ref(false)
+const progresoEscaneo = ref(0)
+const mensajeEscaneo = ref('')
+const camposDetectados = ref<string[]>([])
 
-/*
- * ID del usuario actual de la base de datos.
- *
- * En tu BD los usuarios tienen IDs como:
- * 1 = Administrador
- * 2 = Usuario
- * 3 = Control
- *
- * Si localStorage tiene un ID inválido o demasiado grande,
- * utilizamos 1 como usuario por defecto.
- */
-const usuarioActualId = ref(1)
+const userData = useCookie<Record<string, any> | null>('userData')
+const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
+const isAdmin = computed(() => ['admin', 'administrador'].includes(String(userData.value?.role || '').toLowerCase()))
+const canGasto = (action: string) => isAdmin.value || (abilityRules.value || []).some(rule =>
+  (rule.subject === 'gastos' || rule.subject === 'all') && (rule.action === action || rule.action === 'manage'),
+)
+const puedeCrear = computed(() => canGasto('crear'))
+const puedeAprobar = computed(() => canGasto('aprobar'))
+const puedeEliminar = computed(() => canGasto('eliminar'))
 
-/*
- * Obtiene un ID de usuario válido para la BD.
- */
-const obtenerIdUsuarioValido = (valor: unknown): number => {
-  const id = Number(valor)
-
-  /*
-   * MySQL INT:
-   * máximo positivo: 2147483647
-   *
-   * Number.isSafeInteger también evita números
-   * demasiado grandes para manejarse correctamente
-   * en JavaScript.
-   */
-  if (
-    Number.isSafeInteger(id) &&
-    id > 0 &&
-    id <= 2147483647
-  ) {
-    return id
-  }
-
-  console.warn(
-    '⚠️ ID de usuario inválido detectado:',
-    valor,
-    'Se utilizará el usuario 1.'
-  )
-
-  return 1
+const fechaLocal = () => {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 const nuevoGasto = ref({
-  fondo_id: 1,
+  fondo_id: null as number | null,
   tipo_comprobante_id: null as number | null,
   serie_comprobante: '',
   numero_comprobante: '',
-  fecha_comprobante: new Date().toISOString().split('T')[0],
+  fecha_comprobante: fechaLocal(),
   proveedor_id: null as number | null,
-  persona_realizo_gasto_id: 1,
+  persona_realizo_gasto_id: null as number | null,
   persona_realizo_gasto_nombre: '',
-  usuario_registro_id: 1,
   monto: null as number | null,
   motivo_gasto: '',
   observaciones: '',
@@ -110,26 +87,8 @@ const nuevoGasto = ref({
   tipo_gasto_id: null as number | null,
 })
 
-const tiposComprobante = [
-  { title: 'Factura', value: 1 },
-  { title: 'Recibo', value: 2 },
-  { title: 'Vale de Caja', value: 3 },
-  { title: 'Ticket', value: 4 },
-]
-
-const tiposGasto = [
-  { title: 'Alimentación', value: 1 },
-  { title: 'Transporte', value: 2 },
-  { title: 'Papelería', value: 3 },
-  { title: 'Limpieza', value: 4 },
-  { title: 'Mantenimiento', value: 5 },
-  { title: 'Servicios', value: 6 },
-  { title: 'Compras', value: 7 },
-  { title: 'Otros', value: 8 },
-]
-
 const headers = [
-  { title: 'ID', key: 'id' },
+  { title: 'No.', key: 'id' },
   { title: 'Fecha', key: 'fecha_comprobante' },
   { title: 'Comprobante', key: 'tipo_comprobante' },
   { title: 'Número', key: 'numero_comprobante' },
@@ -142,166 +101,69 @@ const headers = [
   { title: 'Acciones', key: 'actions', sortable: false },
 ]
 
-/*
- * CARGAR USUARIO ACTUAL
- */
-const cargarUsuarioActual = () => {
-  try {
-    const userData = localStorage.getItem('userData')
-
-    console.log('👤 userData encontrado:', userData)
-
-    if (!userData) {
-      console.warn(
-        '⚠️ No existe userData. Se utilizará el usuario 1.'
-      )
-
-      usuarioActualId.value = 1
-      nuevoGasto.value.persona_realizo_gasto_id = 1
-      nuevoGasto.value.usuario_registro_id = 1
-
-      return
-    }
-
-    const usuario = JSON.parse(userData)
-
-    console.log('👤 Usuario almacenado:', usuario)
-    console.log('🆔 ID almacenado:', usuario?.id)
-
-    const idValido = obtenerIdUsuarioValido(usuario?.id)
-
-    usuarioActualId.value = idValido
-
-    nuevoGasto.value.persona_realizo_gasto_id = idValido
-    nuevoGasto.value.usuario_registro_id = idValido
-
-    console.log(
-      '✅ ID de usuario utilizado para el gasto:',
-      idValido
-    )
-  } catch (error) {
-    console.warn(
-      '⚠️ No se pudo obtener el usuario actual:',
-      error
-    )
-
-    usuarioActualId.value = 1
-
-    nuevoGasto.value.persona_realizo_gasto_id = 1
-    nuevoGasto.value.usuario_registro_id = 1
-  }
+const getError = (error: any, fallback: string) => error?.data?.message || error?.message || fallback
+const montoConDosDecimales = (value: unknown) => {
+  const numero = Number(value)
+  if (!Number.isFinite(numero) || numero <= 0 || numero > 99999999.99) return false
+  const centavos = Math.round(numero * 100)
+  return Math.abs(numero * 100 - centavos) < 0.000001
 }
 
-/*
- * CARGAR GASTOS
- */
 const cargarGastos = async () => {
   loading.value = true
-  errorMessage.value = ''
-
   try {
-    const response = await fetch(
-      'http://localhost:4000/api/gastos'
-    )
-
-    if (!response.ok) {
-      throw new Error(
-        'No se pudieron obtener los gastos.'
-      )
-    }
-
-    const data = await response.json()
-
-    gastos.value = data
-  } catch (error: any) {
-    console.error(
-      'Error al cargar gastos:',
-      error
-    )
-
-    errorMessage.value =
-      error.message ||
-      'Error al cargar los gastos.'
-  } finally {
+    gastos.value = await $api<Gasto[]>('/gastos')
+  }
+  catch (error: any) {
+    errorMessage.value = getError(error, 'No se pudieron cargar los gastos.')
+  }
+  finally {
     loading.value = false
   }
 }
 
-/*
- * CARGAR PROVEEDORES
- */
-const cargarProveedores = async () => {
+const cargarCatalogos = async () => {
   loadingProveedores.value = true
-
   try {
-    const response = await fetch(
-      'http://localhost:4000/api/proveedores'
-    )
-
-    if (!response.ok) {
-      throw new Error(
-        'No se pudieron obtener los proveedores.'
-      )
-    }
-
-    const data = await response.json()
-
-    proveedores.value = data
-  } catch (error: any) {
-    console.error(
-      'Error al cargar proveedores:',
-      error
-    )
-
-    errorMessage.value =
-      error.message ||
-      'Error al cargar los proveedores.'
-  } finally {
+    const data = await $api<{
+      tiposComprobante: Catalogo[]
+      proveedores: Proveedor[]
+      usuarios: UsuarioGasto[]
+      tiposGasto: Catalogo[]
+      fondos: Fondo[]
+    }>('/gastos/catalogos')
+    proveedores.value = data.proveedores
+    usuarios.value = data.usuarios
+    fondos.value = data.fondos
+    tiposComprobante.value = data.tiposComprobante.map(item => ({ title: item.nombre, value: item.id }))
+    tiposGasto.value = data.tiposGasto.map(item => ({ title: item.nombre, value: item.id }))
+    if (!nuevoGasto.value.fondo_id && fondos.value.length === 1)
+      nuevoGasto.value.fondo_id = fondos.value[0].id
+  }
+  catch (error: any) {
+    errorMessage.value = getError(error, 'No se pudieron cargar los catálogos del gasto.')
+  }
+  finally {
     loadingProveedores.value = false
   }
 }
 
-/*
- * ABRIR DIÁLOGO
- */
-const abrirDialogo = () => {
-  errorMessage.value = ''
-  successMessage.value = ''
-
-  /*
-   * Aseguramos que el usuario actual
-   * siempre tenga un ID válido.
-   */
-  const idUsuario = obtenerIdUsuarioValido(
-    usuarioActualId.value
-  )
-
-  usuarioActualId.value = idUsuario
-
-  nuevoGasto.value.usuario_registro_id = idUsuario
-
-  isDialogVisible.value = true
-}
-
-/*
- * LIMPIAR FORMULARIO
- */
 const limpiarFormulario = () => {
-  const idUsuario = obtenerIdUsuarioValido(
-    usuarioActualId.value
-  )
-
+  if (facturaVistaPrevia.value) URL.revokeObjectURL(facturaVistaPrevia.value)
+  facturaArchivo.value = null
+  facturaVistaPrevia.value = ''
+  progresoEscaneo.value = 0
+  mensajeEscaneo.value = ''
+  camposDetectados.value = []
   nuevoGasto.value = {
-    fondo_id: 1,
+    fondo_id: fondos.value.length === 1 ? fondos.value[0].id : null,
     tipo_comprobante_id: null,
     serie_comprobante: '',
     numero_comprobante: '',
-    fecha_comprobante:
-      new Date().toISOString().split('T')[0],
+    fecha_comprobante: fechaLocal(),
     proveedor_id: null,
-    persona_realizo_gasto_id: idUsuario,
+    persona_realizo_gasto_id: null,
     persona_realizo_gasto_nombre: '',
-    usuario_registro_id: idUsuario,
     monto: null,
     motivo_gasto: '',
     observaciones: '',
@@ -310,418 +172,214 @@ const limpiarFormulario = () => {
   }
 }
 
-/*
- * GUARDAR GASTO
- */
+const normalizar = (valor: string) => valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+const soloNit = (valor: string) => normalizar(valor).replace(/[^0-9K]/g, '')
+const fechaOcr = (texto: string) => {
+  const coincidencia = texto.match(/\b(20\d{2})[\/.\-](0?[1-9]|1[0-2])[\/.\-]([0-2]?\d|3[01])\b/)
+    || texto.match(/\b([0-2]?\d|3[01])[\/.\-](0?[1-9]|1[0-2])[\/.\-](20\d{2})\b/)
+  if (!coincidencia) return ''
+  const [anio, mes, dia] = coincidencia[1].length === 4
+    ? [coincidencia[1], coincidencia[2], coincidencia[3]]
+    : [coincidencia[3], coincidencia[2], coincidencia[1]]
+  const valor = `${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`
+  return Number.isNaN(new Date(`${valor}T00:00:00`).getTime()) ? '' : valor
+}
+
+const aplicarTextoFactura = (texto: string) => {
+  const limpio = normalizar(texto)
+  const lineas = limpio.split(/\r?\n/).map(linea => linea.trim()).filter(Boolean)
+  const detectados: string[] = []
+  const nit = limpio.match(/\bN\.?I\.?T\.?\s*[:#-]?\s*([0-9][0-9\s.-]{4,12}[0-9K])\b/)?.[1] || ''
+  const proveedor = proveedores.value.find(item => nit && soloNit(item.nit) === soloNit(nit))
+    || proveedores.value.find(item => {
+      const palabras = normalizar(item.nombre).split(/\s+/).filter(palabra => palabra.length > 3)
+      return palabras.length > 0 && palabras.filter(palabra => limpio.includes(palabra)).length >= Math.min(2, palabras.length)
+    })
+  if (proveedor) { nuevoGasto.value.proveedor_id = proveedor.id; detectados.push('Proveedor') }
+
+  const fechaDetectada = fechaOcr(limpio)
+  if (fechaDetectada) { nuevoGasto.value.fecha_comprobante = fechaDetectada; detectados.push('Fecha') }
+
+  const serie = limpio.match(/\bSERIE\s*[:#-]?\s*([A-Z0-9-]{1,20})/)?.[1]
+  if (serie) { nuevoGasto.value.serie_comprobante = serie; detectados.push('Serie') }
+
+  const numero = limpio.match(/(?:FACTURA|DOCUMENTO|DTE|NUMERO|NO\.?)[\s:#-]{0,8}([A-Z0-9][A-Z0-9-]{2,40})/)?.[1]
+  if (numero && numero !== serie) { nuevoGasto.value.numero_comprobante = numero; detectados.push('Número') }
+
+  const montos = lineas
+    .filter(linea => /\bTOTAL\b/.test(linea) && !/SUBTOTAL/.test(linea))
+    .flatMap(linea => [...linea.matchAll(/(?:Q\s*)?([0-9]{1,3}(?:[, ][0-9]{3})*|[0-9]+)[.,]([0-9]{2})\b/g)])
+    .map(match => Number(`${match[1].replace(/[, ]/g, '')}.${match[2]}`))
+    .filter(valor => Number.isFinite(valor) && valor > 0)
+  if (montos.length) { nuevoGasto.value.monto = Math.max(...montos); detectados.push('Monto') }
+
+  const factura = tiposComprobante.value.find(item => normalizar(item.title).includes('FACTURA'))
+  if (factura) { nuevoGasto.value.tipo_comprobante_id = factura.value; detectados.push('Tipo de comprobante') }
+  camposDetectados.value = detectados
+  mensajeEscaneo.value = detectados.length
+    ? `Se completaron ${detectados.length} campos. Revisa la información antes de guardar.`
+    : 'No se identificaron campos con suficiente claridad. Puedes completarlos manualmente.'
+}
+
+const seleccionarFactura = (archivos: File | File[] | null) => {
+  const archivo = Array.isArray(archivos) ? archivos[0] : archivos
+  if (!archivo) return
+  if (!archivo.type.startsWith('image/')) {
+    mensajeEscaneo.value = 'Selecciona una imagen JPG, PNG, WEBP o HEIC compatible con el navegador.'
+    return
+  }
+  if (archivo.size > 12 * 1024 * 1024) {
+    mensajeEscaneo.value = 'La imagen no puede superar 12 MB.'
+    return
+  }
+  if (facturaVistaPrevia.value) URL.revokeObjectURL(facturaVistaPrevia.value)
+  facturaArchivo.value = archivo
+  facturaVistaPrevia.value = URL.createObjectURL(archivo)
+  mensajeEscaneo.value = 'Imagen lista. Presiona “Leer factura” para completar los campos.'
+  camposDetectados.value = []
+}
+
+const escanearFactura = async () => {
+  if (!facturaArchivo.value || escaneandoFactura.value) return
+  escaneandoFactura.value = true
+  progresoEscaneo.value = 2
+  mensajeEscaneo.value = 'Preparando el reconocimiento de texto…'
+  try {
+    const { createWorker } = await import('tesseract.js')
+    const worker = await createWorker('spa', undefined, {
+      logger: evento => {
+        if (typeof evento.progress === 'number') progresoEscaneo.value = Math.max(2, Math.round(evento.progress * 100))
+        if (evento.status === 'recognizing text') mensajeEscaneo.value = 'Leyendo los datos de la factura…'
+      },
+    })
+    try {
+      const resultado = await worker.recognize(facturaArchivo.value)
+      aplicarTextoFactura(resultado.data.text)
+      progresoEscaneo.value = 100
+    }
+    finally { await worker.terminate() }
+  }
+  catch (error: any) {
+    mensajeEscaneo.value = getError(error, 'No fue posible leer esta imagen. Puedes continuar ingresando los datos manualmente.')
+    progresoEscaneo.value = 0
+  }
+  finally { escaneandoFactura.value = false }
+}
+
+const abrirDialogo = () => {
+  errorMessage.value = ''
+  successMessage.value = ''
+  limpiarFormulario()
+  isDialogVisible.value = true
+}
+
 const guardarGasto = async () => {
   errorMessage.value = ''
   successMessage.value = ''
-
-  /*
-   * Validar usuario antes de enviar.
-   */
-  const idUsuario = obtenerIdUsuarioValido(
-    usuarioActualId.value
-  )
-
-  usuarioActualId.value = idUsuario
-
-  nuevoGasto.value.usuario_registro_id =
-    idUsuario
-
-  if (!nuevoGasto.value.tipo_comprobante_id) {
-    errorMessage.value =
-      'Selecciona el tipo de comprobante.'
-    return
-  }
-
-  if (
-    !nuevoGasto.value.numero_comprobante.trim()
-  ) {
-    errorMessage.value =
-      'Ingresa el número de comprobante.'
-    return
-  }
-
-  if (nuevoGasto.value.numero_comprobante.trim().length > 100 || (nuevoGasto.value.serie_comprobante?.trim().length || 0) > 50) {
-    errorMessage.value = 'No se puede ingresar ese comprobante. Ingresa un número de hasta 100 caracteres y una serie de hasta 50.'
-    return
-  }
-
-  if (!nuevoGasto.value.fecha_comprobante) {
-    errorMessage.value =
-      'Selecciona la fecha del comprobante.'
-    return
-  }
-
-  if (!nuevoGasto.value.proveedor_id) {
-    errorMessage.value =
-      'Selecciona un proveedor.'
-    return
-  }
-
-  if (!nuevoGasto.value.persona_realizo_gasto_nombre.trim()) {
-    errorMessage.value = 'Escribe el nombre de quien realizó el gasto.'
-    return
-  }
-
-  if (nuevoGasto.value.persona_realizo_gasto_nombre.trim().length > 150) {
-    errorMessage.value = 'No se puede ingresar un nombre mayor de 150 caracteres. Ingresa el nombre completo de quien realizó el gasto.'
-    return
-  }
-
-  if (!nuevoGasto.value.tipo_gasto_id) {
-    errorMessage.value =
-      'Selecciona el tipo de gasto.'
-    return
-  }
-
-  if (
-    !nuevoGasto.value.monto ||
-    Number(nuevoGasto.value.monto) <= 0 ||
-    Number(nuevoGasto.value.monto) > 99999999.99 ||
-    Math.round(Number(nuevoGasto.value.monto) * 100) !== Number(nuevoGasto.value.monto) * 100
-  ) {
-    errorMessage.value =
-      'No se puede ingresar ese monto. Ingresa un valor mayor a Q 0.00 y con máximo dos decimales.'
-    return
-  }
-
-  if (
-    !nuevoGasto.value.motivo_gasto.trim()
-  ) {
-    errorMessage.value =
-      'Ingresa el motivo del gasto.'
-    return
-  }
-
-  if (nuevoGasto.value.motivo_gasto.trim().length > 500 || (nuevoGasto.value.observaciones?.trim().length || 0) > 5000) {
-    errorMessage.value = 'No se puede ingresar ese texto. Ingresa un motivo de hasta 500 caracteres y observaciones de hasta 5,000.'
-    return
-  }
+  const form = nuevoGasto.value
+  const persona = usuarios.value.find(item => item.id === Number(form.persona_realizo_gasto_id))
+  if (!form.fondo_id) return void (errorMessage.value = 'Selecciona un fondo activo.')
+  if (!form.tipo_comprobante_id) return void (errorMessage.value = 'Selecciona el tipo de comprobante.')
+  if (!form.numero_comprobante.trim()) return void (errorMessage.value = 'Ingresa el número de comprobante.')
+  if (!form.fecha_comprobante) return void (errorMessage.value = 'Selecciona la fecha del comprobante.')
+  if (!form.proveedor_id) return void (errorMessage.value = 'Selecciona un proveedor.')
+  if (!persona) return void (errorMessage.value = 'Selecciona quién realizó el gasto.')
+  if (!form.tipo_gasto_id) return void (errorMessage.value = 'Selecciona el tipo de gasto.')
+  if (!montoConDosDecimales(form.monto))
+    return void (errorMessage.value = 'Ingresa un monto válido mayor a Q 0.00 con máximo dos decimales.')
+  if (!form.motivo_gasto.trim()) return void (errorMessage.value = 'Ingresa el motivo del gasto.')
 
   loading.value = true
-
   try {
-    /*
-     * Validar nuevamente el usuario.
-     */
-    const personaId =
-      obtenerIdUsuarioValido(
-        nuevoGasto.value
-          .persona_realizo_gasto_id
-      )
-
-    const usuarioRegistroId =
-      obtenerIdUsuarioValido(
-        nuevoGasto.value
-          .usuario_registro_id
-      )
-
-    /*
-     * Fecha.
-     */
-    const fecha = new Date(
-      nuevoGasto.value.fecha_comprobante +
-        'T00:00:00'
-    )
-
-    /*
-     * Datos que se enviarán al backend.
-     */
-    const datos = {
-      fondo_id:
-        Number(nuevoGasto.value.fondo_id),
-
-      tipo_comprobante_id:
-        Number(
-          nuevoGasto.value
-            .tipo_comprobante_id
-        ),
-
-      serie_comprobante:
-        nuevoGasto.value
-          .serie_comprobante
-          ?.trim() || null,
-
-      numero_comprobante:
-        nuevoGasto.value
-          .numero_comprobante
-          .trim(),
-
-      fecha_comprobante:
-        nuevoGasto.value
-          .fecha_comprobante,
-
-      proveedor_id:
-        Number(
-          nuevoGasto.value
-            .proveedor_id
-        ),
-
-      /*
-       * IMPORTANTE:
-       * Ambos IDs ahora son números enteros
-       * válidos para la tabla usuarios.
-       */
-      persona_realizo_gasto_id:
-        personaId,
-
-      persona_realizo_gasto_nombre:
-        nuevoGasto.value.persona_realizo_gasto_nombre.trim(),
-
-      usuario_registro_id:
-        usuarioRegistroId,
-
-      monto:
-        Number(
-          nuevoGasto.value.monto
-        ),
-
-      motivo_gasto:
-        nuevoGasto.value
-          .motivo_gasto
-          .trim(),
-
-      observaciones:
-        nuevoGasto.value
-          .observaciones
-          ?.trim() || null,
-
-      documento_url:
-        nuevoGasto.value
-          .documento_url
-          ?.trim() || null,
-
-      mes:
-        fecha.getMonth() + 1,
-
-      anio:
-        fecha.getFullYear(),
-
-      tipo_gasto_id:
-        Number(
-          nuevoGasto.value
-            .tipo_gasto_id
-        ),
-    }
-
-    /*
-     * Mostrar en consola exactamente
-     * qué estamos enviando.
-     */
-    console.log(
-      '📤 DATOS ENVIADOS AL BACKEND:',
-      datos
-    )
-
-    const response = await fetch(
-      'http://localhost:4000/api/gastos',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type':
-            'application/json',
-        },
-        body: JSON.stringify(datos),
-      }
-    )
-
-    const resultado =
-      await response.json()
-
-    if (!response.ok) {
-      throw new Error(
-        resultado.detalles ||
-          resultado.message ||
-          'No se pudo registrar el gasto.'
-      )
-    }
-
-    successMessage.value =
-      'Gasto registrado correctamente.'
-
+    await $api('/gastos', {
+      method: 'POST',
+      body: {
+        fondo_id: Number(form.fondo_id),
+        tipo_comprobante_id: Number(form.tipo_comprobante_id),
+        serie_comprobante: form.serie_comprobante.trim() || null,
+        numero_comprobante: form.numero_comprobante.trim(),
+        fecha_comprobante: form.fecha_comprobante,
+        proveedor_id: Number(form.proveedor_id),
+        persona_realizo_gasto_id: persona.id,
+        persona_realizo_gasto_nombre: persona.nombre_completo,
+        monto: Number(form.monto),
+        motivo_gasto: form.motivo_gasto.trim(),
+        observaciones: form.observaciones.trim() || null,
+        documento_url: form.documento_url.trim() || null,
+        tipo_gasto_id: Number(form.tipo_gasto_id),
+      },
+    })
+    successMessage.value = 'Gasto registrado y enviado a aprobación.'
     isDialogVisible.value = false
-
     limpiarFormulario()
-
     await cargarGastos()
-  } catch (error: any) {
-    console.error(
-      'Error al guardar gasto:',
-      error
-    )
-
-    errorMessage.value =
-      error.message ||
-      'Error al guardar el gasto.'
-  } finally {
+    orden.value = [{ key: 'id', order: 'desc' }]
+    pagina.value = 1
+  }
+  catch (error: any) {
+    errorMessage.value = getError(error, 'No se pudo registrar el gasto.')
+  }
+  finally {
     loading.value = false
   }
 }
 
 const actualizarEstado = async (gasto: Gasto, estado: 'aprobado' | 'rechazado') => {
-  const accion = estado === 'aprobado'
-    ? 'aprobar'
-    : gasto.estado === 'aprobado' ? 'desaprobar' : 'rechazar'
-  if (!confirm(`¿Deseas ${accion} el gasto #${gasto.id}?`)) return
-
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const response = await fetch(`http://localhost:4000/api/gastos/${gasto.id}/estado`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('accessToken') || ''}`,
-      },
-      body: JSON.stringify({ estado, usuario_id: usuarioActualId.value }),
-    })
-    const resultado = await response.json()
-    if (!response.ok) throw new Error(resultado.message || 'No se pudo actualizar el gasto.')
-    successMessage.value = resultado.message
-    await cargarGastos()
-  } catch (error: any) {
-    errorMessage.value = error.message || 'No se pudo actualizar el gasto.'
-  } finally {
-    loading.value = false
-  }
-}
-
-/*
- * ELIMINAR GASTO
- */
-const eliminarGasto = async (
-  id: number
-) => {
-  if (
-    !confirm(
-      '¿Estás seguro de eliminar este gasto?'
-    )
-  ) {
+  if (gasto.estado !== 'pendiente') {
+    errorMessage.value = 'Solo los gastos pendientes pueden aprobarse o rechazarse.'
     return
   }
-
+  const accion = estado === 'aprobado' ? 'aprobar' : 'rechazar'
+  if (!confirm(`¿Deseas ${accion} el gasto #${gasto.id}?`)) return
   loading.value = true
-  errorMessage.value = ''
-
   try {
-    const response = await fetch(
-      `http://localhost:4000/api/gastos/${id}`,
-      {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('accessToken') || ''}`,
-        },
-      }
-    )
-
-    const resultado =
-      await response.json()
-
-    if (!response.ok) {
-      throw new Error(
-        resultado.detalles ||
-          resultado.message ||
-          'No se pudo eliminar el gasto.'
-      )
-    }
-
-    successMessage.value =
-      'Gasto eliminado correctamente.'
-
+    const result = await $api<{ message: string }>(`/gastos/${gasto.id}/estado`, { method: 'PATCH', body: { estado } })
+    successMessage.value = result.message
     await cargarGastos()
-  } catch (error: any) {
-    console.error(
-      'Error al eliminar gasto:',
-      error
-    )
-
-    errorMessage.value =
-      error.message ||
-      'Error al eliminar el gasto.'
-  } finally {
+  }
+  catch (error: any) {
+    errorMessage.value = getError(error, 'No se pudo actualizar el gasto.')
+  }
+  finally {
     loading.value = false
   }
 }
 
-/*
- * FORMATO MONEDA
- */
-const formatoMoneda = (
-  valor: number
-) => {
-  return new Intl.NumberFormat(
-    'es-GT',
-    {
-      style: 'currency',
-      currency: 'GTQ',
-    }
-  ).format(Number(valor))
-}
-
-/*
- * FORMATO FECHA
- */
-const formatoFecha = (
-  fecha: string
-) => {
-  if (!fecha) {
-    return ''
+const eliminarGasto = async (id: number) => {
+  if (!confirm('¿Estás seguro de eliminar este gasto pendiente?')) return
+  loading.value = true
+  try {
+    const result = await $api<{ message: string }>(`/gastos/${id}`, { method: 'DELETE' })
+    successMessage.value = result.message
+    await cargarGastos()
   }
-
-  const partes =
-    fecha
-      .split('T')[0]
-      .split('-')
-
-  if (partes.length !== 3) {
-    return fecha
+  catch (error: any) {
+    errorMessage.value = getError(error, 'No se pudo eliminar el gasto.')
   }
-
-  return `${partes[2]}/${partes[1]}/${partes[0]}`
-}
-
-/*
- * COLOR DEL ESTADO
- */
-const colorEstado = (
-  estado: string
-) => {
-  switch (estado) {
-    case 'aprobado':
-      return 'success'
-
-    case 'rechazado':
-      return 'error'
-
-    case 'anulado':
-      return 'secondary'
-
-    default:
-      return 'warning'
+  finally {
+    loading.value = false
   }
 }
 
-/*
- * INICIALIZACIÓN
- */
+const formatoMoneda = (valor: number) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(Number(valor))
+const formatoFecha = (fecha: string) => {
+  if (!fecha) return ''
+  const partes = fecha.split('T')[0].split('-')
+  return partes.length === 3 ? `${partes[2]}/${partes[1]}/${partes[0]}` : fecha
+}
+const colorEstado = (estado: string) => estado === 'aprobado' ? 'success' : estado === 'rechazado' ? 'error' : 'warning'
+
 onMounted(async () => {
-  cargarUsuarioActual()
-
-  await Promise.all([
-    cargarGastos(),
-    cargarProveedores(),
-  ])
+  await Promise.all([cargarGastos(), cargarCatalogos()])
 })
 </script>
 
 <template>
-  <div>
-    <VCard>
-      <VCardItem>
+  <div class="product-page">
+    <VCard class="module-card">
+      <VCardItem class="module-header">
         <VCardTitle>
-          Gastos
+          <VIcon icon="tabler-receipt-2" color="primary" class="me-2" /> Gastos
         </VCardTitle>
 
         <VCardSubtitle>
@@ -741,20 +399,13 @@ onMounted(async () => {
           {{ successMessage }}
         </VAlert>
 
-        <VAlert
-          v-if="errorMessage"
-          type="error"
-          variant="tonal"
-          closable
-          class="mb-4"
-        >
-          {{ errorMessage }}
-        </VAlert>
+        <AppErrorAlert v-model="errorMessage" />
 
         <div class="d-flex justify-end mb-4">
           <VBtn
+            v-if="puedeCrear"
             color="primary"
-            prepend-icon="ri-add-line"
+            prepend-icon="tabler-plus"
             @click="abrirDialogo"
           >
             Registrar gasto
@@ -762,12 +413,16 @@ onMounted(async () => {
         </div>
 
         <VDataTable
+          v-model:page="pagina"
+          v-model:items-per-page="numberPageSize"
+          v-model:sort-by="orden"
           :headers="headers"
           :items="gastos"
           :loading="loading"
           item-value="id"
-          class="text-no-wrap"
+          class="text-no-wrap product-table"
         >
+          <template #item.id="{ index }">{{ rowNumber(index) }}</template>
           <template
             #item.fecha_comprobante="{ item }"
           >
@@ -833,29 +488,31 @@ onMounted(async () => {
             #item.actions="{ item }"
           >
             <VBtn
-              v-if="!esOperador && item.estado === 'pendiente'"
+              v-if="puedeAprobar && item.estado === 'pendiente'"
               icon
-              variant="text"
+              variant="tonal"
               color="success"
               size="small"
               title="Aprobar gasto"
+              aria-label="Aprobar gasto"
               @click="actualizarEstado(item, 'aprobado')"
             >
-              <VIcon icon="ri-check-line" />
+              <VIcon icon="tabler-check" />
             </VBtn>
             <VBtn
-              v-if="!esOperador && item.estado === 'pendiente'"
+              v-if="puedeAprobar && item.estado === 'pendiente'"
               icon
-              variant="text"
+              variant="tonal"
               color="warning"
               size="small"
               title="Rechazar gasto"
+              aria-label="Rechazar gasto"
               @click="actualizarEstado(item, 'rechazado')"
             >
-              <VIcon icon="ri-close-line" />
+              <VIcon icon="tabler-x" />
             </VBtn>
             <VBtn
-              v-if="!esOperador && item.estado === 'aprobado'"
+              v-if="false"
               icon
               variant="text"
               color="warning"
@@ -863,20 +520,22 @@ onMounted(async () => {
               title="Desaprobar gasto"
               @click="actualizarEstado(item, 'rechazado')"
             >
-              <VIcon icon="ri-thumb-down-line" />
+              <VIcon icon="tabler-thumb-down" />
             </VBtn>
             <VBtn
-              v-if="!esOperador"
+              v-if="puedeEliminar && item.estado === 'pendiente'"
               icon
-              variant="text"
+              variant="tonal"
               color="error"
               size="small"
+              title="Eliminar gasto"
+              aria-label="Eliminar gasto"
               @click="
                 eliminarGasto(item.id)
               "
             >
               <VIcon
-                icon="ri-delete-bin-line"
+                icon="tabler-trash"
               />
             </VBtn>
           </template>
@@ -890,7 +549,7 @@ onMounted(async () => {
 
     <VDialog
       v-model="isDialogVisible"
-      max-width="700"
+      max-width="920"
       persistent
     >
       <VCard>
@@ -910,22 +569,61 @@ onMounted(async () => {
             "
           >
             <VIcon
-              icon="ri-close-line"
+              icon="tabler-x"
+              title="Cerrar formulario"
+              aria-label="Cerrar formulario"
+
+
+
             />
           </VBtn>
         </VCardTitle>
 
         <VCardText>
+          <section class="invoice-scanner mb-6">
+            <div class="d-flex align-center justify-space-between flex-wrap ga-3 mb-4">
+              <div><div class="process-kicker">Asistente OCR</div><h3 class="text-h5 mb-1">Escanear factura</h3><p class="text-medium-emphasis mb-0">Toma una foto o selecciona una imagen. También puedes llenar todo manualmente.</p></div>
+              <VChip color="primary" variant="tonal"><VIcon start icon="tabler-lock" />Lectura en el navegador</VChip>
+            </div>
+            <VRow align="stretch">
+              <VCol cols="12" md="5">
+                <VFileInput accept="image/*" capture="environment" label="Foto de la factura" prepend-icon="" prepend-inner-icon="tabler-camera" show-size :disabled="escaneandoFactura" @update:model-value="seleccionarFactura" />
+                <div v-if="facturaVistaPrevia" class="invoice-preview"><img :src="facturaVistaPrevia" alt="Vista previa de la factura"></div>
+                <div v-else class="invoice-placeholder"><VIcon icon="tabler-scan" size="48"/><span>La vista previa aparecerá aquí</span></div>
+              </VCol>
+              <VCol cols="12" md="7" class="d-flex flex-column">
+                <VAlert color="info" variant="tonal" icon="tabler-sparkles" class="mb-4">El sistema intentará detectar proveedor, fecha, serie, número y monto. Confirma siempre los datos antes de guardar.</VAlert>
+                <VProgressLinear v-if="escaneandoFactura" :model-value="progresoEscaneo" color="primary" height="8" rounded class="mb-3" />
+                <p v-if="mensajeEscaneo" class="text-body-2 mb-3">{{ mensajeEscaneo }}</p>
+                <div v-if="camposDetectados.length" class="d-flex flex-wrap ga-2 mb-4"><VChip v-for="campo in camposDetectados" :key="campo" color="success" size="small" variant="tonal"><VIcon start icon="tabler-check"/>{{ campo }}</VChip></div>
+                <VBtn :disabled="!facturaArchivo || escaneandoFactura" :loading="escaneandoFactura" prepend-icon="tabler-scan" size="large" class="mt-auto" @click="escanearFactura">Leer factura</VBtn>
+              </VCol>
+            </VRow>
+          </section>
+          <VDivider class="mb-6" />
+          <div class="d-flex align-center ga-2 mb-4"><VIcon icon="tabler-pencil" color="primary"/><h3 class="text-h5 mb-0">Datos del gasto</h3><VChip size="small" variant="tonal">Editables</VChip></div>
           <VRow>
-            <VCol
-              cols="12"
-              md="6"
-            >
-              <VTextField
-                v-model="nuevoGasto.persona_realizo_gasto_nombre"
-                label="Nombre de quien realizó el gasto *"
-                placeholder="Escribe el nombre completo"
-                maxlength="150"
+            <VCol cols="12" md="6">
+              <VSelect
+                v-model="nuevoGasto.fondo_id"
+                :items="fondos"
+                :item-title="item => `Fondo ${item.id} · ${String(item.mes).padStart(2, '0')}/${item.anio}`"
+                item-value="id"
+                label="Fondo activo *"
+                placeholder="Selecciona un fondo"
+                :disabled="fondos.length === 1"
+              />
+            </VCol>
+
+            <VCol cols="12" md="6">
+              <VSelect
+                v-model="nuevoGasto.persona_realizo_gasto_id"
+                :items="usuarios"
+                item-title="nombre_completo"
+                item-value="id"
+                label="Persona que realizó el gasto *"
+                placeholder="Selecciona una persona"
+                clearable
               />
             </VCol>
 

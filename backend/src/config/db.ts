@@ -1,16 +1,18 @@
 
 import 'dotenv/config'
 import mysql from 'mysql2/promise'
+import { env } from './env'
 
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || '127.0.0.1',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'root',
-  database: process.env.DB_NAME || 'caja_chica_db',
-  port: Number(process.env.DB_PORT) || 8889,
+  host: env.dbHost,
+  user: env.dbUser,
+  password: env.dbPassword,
+  database: env.dbName,
+  port: env.dbPort,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  decimalNumbers: false,
 })
 
 // Se mantienen ambas formas de importación usadas por los controladores existentes.
@@ -19,18 +21,11 @@ export const db = pool
 export default pool
 
 export const testDatabaseConnection = async () => {
+  const connection = await db.getConnection()
   try {
-    const connection = await db.getConnection()
-
-    console.log(
-      '✅ Conexión exitosa a la base de datos MySQL (caja_chica_db)'
-    )
-
+    await connection.ping()
+  }
+  finally {
     connection.release()
-  } catch (error) {
-    console.error(
-      '❌ Error al conectar a la base de datos MySQL:',
-      error
-    )
   }
 }

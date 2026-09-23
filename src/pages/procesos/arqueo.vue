@@ -39,13 +39,20 @@ const imprimir = () => {
 </script>
 
 <template>
-  <form ref="formulario" class="arqueo" @submit.prevent="imprimir">
-    <div class="acciones d-flex justify-space-between align-center mb-5">
-      <h1 class="text-h4">Arqueo de Caja Chica</h1>
-      <VBtn type="submit">Imprimir / Guardar PDF</VBtn>
+  <form ref="formulario" class="arqueo process-page" @submit.prevent="imprimir">
+    <div class="acciones page-hero process-hero d-flex justify-space-between align-center mb-6">
+      <div class="d-flex align-center ga-4">
+        <VAvatar color="primary" variant="tonal" rounded size="58"><VIcon icon="tabler-scale" size="30" /></VAvatar>
+        <div>
+          <div class="process-kicker">Control y auditoría</div>
+          <h1 class="text-h4 font-weight-bold mb-1">Arqueo de Caja Chica</h1>
+          <p class="text-body-1 text-medium-emphasis mb-0">Verifica el efectivo y la documentación disponible.</p>
+        </div>
+      </div>
+      <VBtn type="submit" prepend-icon="tabler-printer" size="large">Imprimir / Guardar PDF</VBtn>
     </div>
 
-    <section class="hoja">
+    <section class="hoja process-document">
       <header>
         <strong>DIARIOS MODERNOS, S.A.</strong><br>
         <strong>DEPARTAMENTO DE AUDITORÍA INTERNA</strong>
@@ -96,7 +103,7 @@ const imprimir = () => {
       </div>
     </section>
 
-    <section class="hoja segunda">
+    <section class="hoja segunda process-document">
       <label for="observaciones"><b>OBSERVACIONES:</b></label>
       <textarea id="observaciones" v-model="observaciones" rows="8" class="editable" />
       <div class="observaciones impreso">{{ observaciones }}</div>
@@ -110,15 +117,17 @@ const imprimir = () => {
 </template>
 
 <style scoped>
-.hoja { padding: 32px; margin-block-end: 24px; background: white; color: #222; font-family: Arial, sans-serif; }
+.hoja { padding: 40px; margin-block-end: 24px; border: 1px solid rgba(var(--v-border-color), .12); border-top: 5px solid rgb(var(--v-theme-primary)); border-radius: 18px; background: white; color: #222; font-family: Arial, sans-serif; box-shadow: 0 14px 40px rgba(34, 32, 46, .08); }
 header { line-height: 1.8; }
 .encabezado { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-input, textarea { border: 1px solid #aaa; padding: 5px; background: white; color: #222; border-radius: 2px; max-inline-size: 100%; }
+input, textarea { border: 1px solid #c8c6ce; padding: 8px 10px; background: white; color: #222; border-radius: 7px; max-inline-size: 100%; transition: border-color .18s, box-shadow .18s; }
+input:focus, textarea:focus { outline: none; border-color: rgb(var(--v-theme-primary)); box-shadow: 0 0 0 3px rgba(var(--cc-gold), .12); }
 .lugar { inline-size: 120px; margin-inline: 8px; }.datos { margin-block: 22px; }.datos label { display: flex; align-items: center; gap: 12px; margin-block: 8px; }.datos b { inline-size: 190px; text-align: end; }.datos input { flex: 1; }.tabla { overflow-x: auto; }
-table { border-collapse: collapse; inline-size: 100%; font-size: 13px; } th, td { border-inline: 1px solid #777; border-block-end: 1px dotted #aaa; padding: 8px; } th { border-block: 1px solid #777; text-decoration: underline; } tr:last-child td { border-block-end: 1px solid #777; } td:first-child { inline-size: 32%; } td:nth-child(2) { inline-size: 23%; } td:nth-child(3) { inline-size: 15%; } td input { inline-size: 100%; min-inline-size: 70px; text-align: end; }.numero { text-align: end; white-space: nowrap; }
+table { border-collapse: separate; border-spacing: 0; inline-size: 100%; overflow: hidden; border: 1px solid #d8d5de; border-radius: 10px; font-size: 13px; } th, td { border-inline-end: 1px solid #ddd; border-block-end: 1px solid #e4e2e8; padding: 9px; } th { background: #f4efe2; color: #4a4028; font-weight: 750; letter-spacing: .035em; } tr:last-child td { border-block-end: 0; } th:last-child, td:last-child { border-inline-end: 0; } tbody tr:hover { background: #fbf8f0; } td:first-child { inline-size: 32%; } td:nth-child(2) { inline-size: 23%; } td:nth-child(3) { inline-size: 15%; } td input { inline-size: 100%; min-inline-size: 70px; text-align: end; }.numero { text-align: end; white-space: nowrap; }
 .totales { margin-block-start: 24px; margin-inline-start: auto; max-inline-size: 550px; }.totales > div { display: grid; grid-template-columns: 1fr 1fr; align-items: center; }.totales b { text-align: end; padding: 10px; }.totales strong { padding: 12px; border: 1px solid #777; text-align: end; }.diferencia { background: #efd26a; }
 .segunda textarea { display: block; inline-size: 100%; margin-block: 16px 32px; }.declaracion { font-size: 13px; margin-block: 32px; }.firmas { display: flex; justify-content: space-around; gap: 40px; margin-block-start: 160px; text-align: center; }.firmas > div { flex: 1; }.firma { border-block-end: 1px solid #222; min-block-size: 35px; margin-block-end: 8px; }.impreso { display: none; }
-@media print { @page { size: A4; margin: 15mm; }.acciones, input, .editable { display: none !important; }.impreso { display: inline; }.hoja { padding: 0; margin: 0; font-size: 12px; }.segunda { break-before: page; }.encabezado { gap: 10px; } th, td { padding: 9px 6px; } td:nth-child(3), td:last-child { text-align: end; }.observaciones { display: block; white-space: pre-wrap; overflow-wrap: anywhere; min-block-size: 80mm; line-height: 10mm; background: repeating-linear-gradient(transparent 0, transparent 9.7mm, #aaa 9.8mm, transparent 10mm); }.firmas { margin-block-start: 70mm; break-inside: avoid; } }
+@media (max-width: 700px) { .acciones { align-items: flex-start !important; flex-direction: column; } .acciones .v-btn { inline-size: 100%; } .hoja { padding: 20px; } .datos label { align-items: flex-start; flex-direction: column; gap: 5px; } .datos b { inline-size: auto; text-align: start; } .datos input { inline-size: 100%; } }
+@media print { @page { size: A4; margin: 15mm; }.acciones, input, .editable { display: none !important; }.impreso { display: inline; }.hoja { padding: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none; font-size: 12px; }.segunda { break-before: page; }.encabezado { gap: 10px; } table { border-radius: 0; } th { background: white; color: #222; text-decoration: underline; } th, td { padding: 9px 6px; border-color: #777; } td:nth-child(3), td:last-child { text-align: end; }.observaciones { display: block; white-space: pre-wrap; overflow-wrap: anywhere; min-block-size: 80mm; line-height: 10mm; background: repeating-linear-gradient(transparent 0, transparent 9.7mm, #aaa 9.8mm, transparent 10mm); }.firmas { margin-block-start: 70mm; break-inside: avoid; } }
 </style>
 
 <style>

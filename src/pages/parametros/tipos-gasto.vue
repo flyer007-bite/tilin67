@@ -1,406 +1,89 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { useTableNumbering } from '@/composables/useTableNumbering'
+const { numberPage, numberPageSize, rowNumber } = useTableNumbering()
+import { computed, onMounted, ref } from 'vue'
+import { $api } from '@/utils/api'
 
-interface TipoGasto {
-  id?: number
-  nombre: string
-  descripcion: string
-}
+type Rule = { action: string; subject: string }
+interface TipoGasto { id?: number; nombre: string; descripcion: string }
+interface TipoGastoTabla extends TipoGasto { numero: number }
 
-// Opciones disponibles
-const opcionesGastos = [
-  'Viáticos y Alimentación',
-  'Papelería y Útiles de Oficina',
-  'Transporte y Combustible',
-  'Mantenimiento y Reparaciones',
-  'Servicios Públicos / Mantenimiento',
-  'Envíos y Mensajería',
-  'Otros Gastos Menores',
-]
-
-// Lista de tipos de gasto
+const opcionesGastos = ['Viáticos y Alimentación', 'Papelería y Útiles de Oficina', 'Transporte y Combustible', 'Mantenimiento y Reparaciones', 'Servicios Públicos / Mantenimiento', 'Envíos y Mensajería', 'Otros Gastos Menores']
 const tiposGasto = ref<TipoGasto[]>([])
-
-// Estados
+const tiposGastoTabla = computed<TipoGastoTabla[]>(() => {
+  const ordenados = [...tiposGasto.value].sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+  return ordenados.map((item, index) => ({ ...item, numero: index + 1 }))
+})
 const loading = ref(false)
+const guardando = ref(false)
 const dialog = ref(false)
-const esAdmin = computed(() => {
-  try {
-    const role = String(JSON.parse(localStorage.getItem('userData') || '{}').role || '').toLowerCase()
-    return ['admin', 'administrador'].includes(role) || role.endsWith(' - administrador')
-  } catch {
-    return false
-  }
-})
-
-// Nuevo tipo de gasto
-const nuevoGasto = ref<TipoGasto>({
-  nombre: '',
-  descripcion: '',
-})
-
-// Encabezados de la tabla
+const error = ref('')
+const ok = ref('')
+const nuevoGasto = ref<TipoGasto>({ nombre: '', descripcion: '' })
+const userData = useCookie<Record<string, any> | null>('userData')
+const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
+const isAdmin = computed(() => ['admin', 'administrador'].includes(String(userData.value?.role || '').toLowerCase()))
+const puede = (accion: string) => isAdmin.value || (abilityRules.value || []).some(rule =>
+  (rule.subject === 'tipos_gasto' || rule.subject === 'all') && (rule.action === accion || rule.action === 'manage'),
+)
+const puedeCrear = computed(() => puede('crear'))
+const puedeEliminar = computed(() => puede('eliminar'))
 const headers = [
-  {
-    title: 'ID',
-    key: 'id',
-    sortable: true,
-  },
-  {
-    title: 'Tipo de Gasto',
-    key: 'nombre',
-    sortable: true,
-  },
-  {
-    title: 'Descripción',
-    key: 'descripcion',
-    sortable: true,
-  },
-  {
-    title: 'Acciones',
-    key: 'acciones',
-    sortable: false,
-    align: 'center',
-  },
+  { title: 'No.', key: 'numero', sortable: false },
+  { title: 'Tipo de Gasto', key: 'nombre' },
+  { title: 'Descripción', key: 'descripcion' },
+  { title: 'Acciones', key: 'acciones', sortable: false, align: 'center' as const },
 ]
-
-// =====================================================
-// 1. OBTENER TIPOS DE GASTO - GET
-// =====================================================
 
 const fetchTiposGasto = async () => {
   loading.value = true
-
-  try {
-    const res = await fetch(
-      'http://localhost:4000/api/tipos-gasto'
-    )
-
-    if (res.ok) {
-      tiposGasto.value = await res.json()
-    } else {
-      console.error(
-        'Error al obtener los tipos de gasto:',
-        res.status
-      )
-    }
-  } catch (error) {
-    console.error(
-      'Error de red al obtener tipos de gasto:',
-      error
-    )
-  } finally {
-    loading.value = false
-  }
+  error.value = ''
+  try { tiposGasto.value = await $api<TipoGasto[]>('/tipos-gasto') }
+  catch (e: any) { error.value = e?.data?.message || e?.message || 'No se pudieron cargar los tipos de gasto.' }
+  finally { loading.value = false }
 }
-
-// =====================================================
-// 2. GUARDAR TIPO DE GASTO - POST
-// =====================================================
 
 const guardarTipoGasto = async () => {
-  const nombreTexto =
-    typeof nuevoGasto.value.nombre === 'object'
-      ? (nuevoGasto.value.nombre as any)?.title || ''
-      : String(nuevoGasto.value.nombre || '').trim()
-
-  if (!nombreTexto) {
-    alert(
-      'Por favor selecciona o escribe un Tipo de Gasto.'
-    )
-
-    return
-  }
-
+  error.value = ''; ok.value = ''
+  const nombre = typeof nuevoGasto.value.nombre === 'object'
+    ? String((nuevoGasto.value.nombre as any)?.title || '').trim()
+    : String(nuevoGasto.value.nombre || '').trim()
+  if (!nombre) { error.value = 'Selecciona o escribe un tipo de gasto.'; return }
+  guardando.value = true
   try {
-    const payload = {
-      nombre: nombreTexto,
-      descripcion:
-        nuevoGasto.value.descripcion || '',
-    }
-
-    const res = await fetch(
-      'http://localhost:4000/api/tipos-gasto',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    )
-
-    if (res.ok) {
-      // Actualizar tabla
-      await fetchTiposGasto()
-
-      // Cerrar modal
-      dialog.value = false
-
-      // Limpiar formulario
-      nuevoGasto.value = {
-        nombre: '',
-        descripcion: '',
-      }
-    } else {
-      let errData: any = {}
-
-      try {
-        errData = await res.json()
-      } catch {
-        // Si el servidor no devuelve JSON
-      }
-
-      alert(
-        `Error al guardar: ${
-          errData.message || 'Error en el servidor'
-        }`
-      )
-    }
-  } catch (error) {
-    console.error(
-      'Error de conexión:',
-      error
-    )
-
-    alert(
-      'No se pudo conectar con la API en http://localhost:4000'
-    )
+    await $api('/tipos-gasto', { method: 'POST', body: { nombre, descripcion: String(nuevoGasto.value.descripcion || '').trim() } })
+    ok.value = 'Tipo de gasto registrado correctamente.'
+    dialog.value = false
+    nuevoGasto.value = { nombre: '', descripcion: '' }
+    await fetchTiposGasto()
   }
+  catch (e: any) { error.value = e?.data?.message || e?.message || 'No fue posible guardar el tipo de gasto.' }
+  finally { guardando.value = false }
 }
-
-// =====================================================
-// 3. ELIMINAR TIPO DE GASTO - DELETE
-// =====================================================
 
 const eliminarTipoGasto = async (id?: number) => {
-  // Verificar ID
-  if (!id) {
-    alert('No se encontró el ID del registro.')
-
-    return
-  }
-
-  // Confirmación
-  const confirmar = confirm(
-    '¿Estás seguro de que deseas eliminar este tipo de gasto?'
-  )
-
-  if (!confirmar) {
-    return
-  }
-
+  error.value = ''; ok.value = ''
+  if (!id || !confirm('¿Eliminar este tipo de gasto? Esta acción solo se permite si no tiene movimientos relacionados.')) return
   try {
-    const res = await fetch(
-      `http://localhost:4000/api/tipos-gasto/${id}`,
-      {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem('accessToken') || ''}` },
-      }
-    )
-
-    if (res.ok) {
-      // Actualizar tabla después de eliminar
-      await fetchTiposGasto()
-    } else {
-      let errData: any = {}
-
-      try {
-        errData = await res.json()
-      } catch {
-        // Si el servidor no devuelve JSON
-      }
-
-      alert(
-        `Error al eliminar: ${
-          errData.message || 'Error en el servidor'
-        }`
-      )
-    }
-  } catch (error) {
-    console.error(
-      'Error de conexión al eliminar:',
-      error
-    )
-
-    alert(
-      'No se pudo conectar con la API para eliminar el registro.'
-    )
+    await $api(`/tipos-gasto/${id}`, { method: 'DELETE' })
+    ok.value = 'Tipo de gasto eliminado correctamente.'
+    await fetchTiposGasto()
   }
+  catch (e: any) { error.value = e?.data?.message || e?.message || 'No fue posible eliminar el tipo de gasto.' }
 }
 
-// =====================================================
-// 4. CARGAR DATOS AL INICIAR
-// =====================================================
-
-onMounted(() => {
-  fetchTiposGasto()
-})
+onMounted(fetchTiposGasto)
 </script>
 
 <template>
-  <div>
-
-    <!-- ========================================= -->
-    <!-- ENCABEZADO -->
-    <!-- ========================================= -->
-
-    <div
-      class="d-flex justify-space-between align-center mb-6"
-    >
-      <div>
-        <h2 class="text-h4 font-weight-bold">
-          Tipos de Gasto
-        </h2>
-
-        <p class="text-body-1 text-medium-emphasis">
-          Administración de tipos de gasto de Caja Chica.
-        </p>
-      </div>
-
-      <VBtn
-        color="primary"
-        prepend-icon="tabler-plus"
-        @click="dialog = true"
-      >
-        Nuevo Tipo de Gasto
-      </VBtn>
+  <div class="admin-page">
+    <div class="page-hero admin-hero d-flex flex-wrap justify-space-between align-center ga-3 mb-6">
+      <div class="d-flex align-center ga-4"><VAvatar color="primary" variant="tonal" rounded size="58"><VIcon icon="tabler-category-2" size="30"/></VAvatar><div><div class="process-kicker">Catálogo financiero</div><h2 class="text-h4 font-weight-bold">Tipos de Gasto</h2><p class="text-body-1 text-medium-emphasis mb-0">Clasificación utilizada al registrar movimientos.</p></div></div>
+      <VBtn v-if="puedeCrear" color="primary" prepend-icon="tabler-plus" @click="dialog = true">Nuevo Tipo de Gasto</VBtn>
     </div>
-
-
-    <!-- ========================================= -->
-    <!-- TABLA -->
-    <!-- ========================================= -->
-
-    <VCard>
-
-      <VDataTable
-        :headers="headers"
-        :items="tiposGasto"
-        :loading="loading"
-        no-data-text="No hay tipos de gasto registrados."
-      >
-
-        <!-- COLUMNA DE ACCIONES -->
-
-        <template #item.acciones="{ item }">
-
-          <div class="d-flex justify-center">
-
-            <VBtn
-              v-if="esAdmin"
-              color="error"
-              variant="tonal"
-              size="small"
-              @click="eliminarTipoGasto(item.id)"
-            >
-
-              <VIcon
-                icon="tabler-trash"
-                class="me-1"
-              />
-
-              Eliminar
-
-            </VBtn>
-
-          </div>
-
-        </template>
-
-      </VDataTable>
-
-    </VCard>
-
-
-    <!-- ========================================= -->
-    <!-- MODAL NUEVO TIPO DE GASTO -->
-    <!-- ========================================= -->
-
-    <VDialog
-      v-model="dialog"
-      max-width="500px"
-    >
-
-      <VCard>
-
-        <!-- TÍTULO -->
-
-        <VCardTitle>
-          Seleccionar Tipo de Gasto
-        </VCardTitle>
-
-
-        <!-- CONTENIDO -->
-
-        <VCardText>
-
-          <VRow>
-
-            <!-- TIPO DE GASTO -->
-
-            <VCol cols="12">
-
-              <VCombobox
-                v-model="nuevoGasto.nombre"
-                :items="opcionesGastos"
-                label="Tipo de Gasto *"
-                placeholder="Selecciona o escribe una opción"
-                clearable
-              />
-
-            </VCol>
-
-
-            <!-- DESCRIPCIÓN -->
-
-            <VCol cols="12">
-
-              <VTextarea
-                v-model="nuevoGasto.descripcion"
-                label="Descripción adicional"
-                placeholder="Notas o justificación de este tipo de gasto"
-                rows="3"
-              />
-
-            </VCol>
-
-          </VRow>
-
-        </VCardText>
-
-
-        <!-- BOTONES -->
-
-        <VCardActions
-          class="justify-end pe-6 pb-4"
-        >
-
-          <!-- CANCELAR -->
-
-          <VBtn
-            color="secondary"
-            variant="outlined"
-            @click="dialog = false"
-          >
-            Cancelar
-          </VBtn>
-
-
-          <!-- GUARDAR -->
-
-          <VBtn
-            color="primary"
-            @click="guardarTipoGasto"
-          >
-            Guardar en BD
-          </VBtn>
-
-        </VCardActions>
-
-      </VCard>
-
-    </VDialog>
-
+    <AppErrorAlert v-model="error" />
+    <VAlert v-if="ok" type="success" variant="tonal" class="mb-4">{{ ok }}</VAlert>
+    <VCard class="module-card"><VCardItem class="module-header"><VCardTitle>Catálogo de categorías</VCardTitle><template #append><VChip color="primary" variant="tonal">{{ tiposGastoTabla.length }} tipos</VChip></template></VCardItem><VCardText class="pa-6"><VDataTable v-model:page="numberPage" v-model:items-per-page="numberPageSize" :headers="headers" :items="tiposGastoTabla" :loading="loading" class="product-table" no-data-text="No hay tipos de gasto registrados."><template #item.numero="{ index }">{{ rowNumber(index) }}</template><template #item.nombre="{ item }"><strong>{{ item.nombre }}</strong></template><template #item.acciones="{ item }"><VBtn v-if="puedeEliminar" icon size="small" color="error" variant="tonal" title="Eliminar tipo de gasto" aria-label="Eliminar tipo de gasto" @click="eliminarTipoGasto(item.id)"><VIcon icon="tabler-trash" /></VBtn></template></VDataTable></VCardText></VCard>
+    <VDialog v-model="dialog" max-width="500"><VCard title="Nuevo Tipo de Gasto"><VCardText><VCombobox v-model="nuevoGasto.nombre" :items="opcionesGastos" label="Tipo de Gasto *" clearable class="mb-4"/><VTextarea v-model="nuevoGasto.descripcion" label="Descripción" maxlength="500" counter /></VCardText><VCardActions class="justify-end"><VBtn variant="outlined" @click="dialog = false">Cancelar</VBtn><VBtn color="primary" :loading="guardando" @click="guardarTipoGasto">Guardar</VBtn></VCardActions></VCard></VDialog>
   </div>
 </template>

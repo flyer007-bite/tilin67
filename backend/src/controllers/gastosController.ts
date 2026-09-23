@@ -3,6 +3,7 @@ import { db } from '../config/db'
 import { RowDataPacket, ResultSetHeader } from 'mysql2'
 import { fechaValida, idPositivo, montoValido, textoSeguro } from '../utils/validacion'
 import type { AuthenticatedRequest } from '../middlewares/auth.middleware'
+import { registrarAuditoria } from '../utils/auditoria'
 
 export const crearGasto = async (
   req: AuthenticatedRequest,
@@ -30,7 +31,7 @@ export const crearGasto = async (
   const proveedorId = idPositivo(proveedor_id)
   const personaId = idPositivo(persona_realizo_gasto_id)
   // Quien registra se obtiene de la sesión; el navegador no puede elegirlo.
-  const usuarioId = req.user?.id
+  const usuarioId = req.auth?.id
   const tipoGastoId = idPositivo(tipo_gasto_id)
   const numeroComprobante = textoSeguro(String(numero_comprobante ?? ''), 100)
   const fechaComprobante = fechaValida(fecha_comprobante)
@@ -53,9 +54,36 @@ export const crearGasto = async (
   try {
     await connection.beginTransaction()
 
-    /*
-     * 1. Crear el gasto
-     */
+    const scopeSql = req.auth?.esAdministradorGlobal ? ' AND empresa_id IS NOT NULL AND departamento_id IS NOT NULL' : ' AND empresa_id=? AND departamento_id=?'
+    const scopeParams = req.auth?.esAdministradorGlobal ? [] : [req.auth?.empresaId, req.auth?.departamentoId]
+    const [fondos] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM fondos_caja WHERE id=? AND estado='activo'${scopeSql} FOR UPDATE`, [fondoId, ...scopeParams],
+    )
+    if (!fondos.length) {
+      await connection.rollback()
+      res.status(409).json({ message: 'El fondo no existe, no está activo o no pertenece a tu organización.' })
+      return
+    }
+    const references = await Promise.all([
+      connection.query<RowDataPacket[]>('SELECT id FROM tipos_comprobante WHERE id=? LIMIT 1', [tipoComprobanteId]),
+      connection.query<RowDataPacket[]>('SELECT id FROM proveedores WHERE id=? LIMIT 1', [proveedorId]),
+      connection.query<RowDataPacket[]>(`SELECT id FROM usuarios WHERE id=? AND estado=1${req.auth?.esAdministradorGlobal ? '' : ' AND empresa_id=? AND departamento_id=?'} LIMIT 1`, [personaId, ...scopeParams]),
+      connection.query<RowDataPacket[]>('SELECT id FROM tipos_gasto WHERE id=? LIMIT 1', [tipoGastoId]),
+    ])
+    if (references.some(([rows]) => !rows.length)) {
+      await connection.rollback()
+      res.status(400).json({ message: 'Alguno de los datos seleccionados ya no está disponible.' })
+      return
+    }
+    const [duplicates] = await connection.query<RowDataPacket[]>(
+      'SELECT id FROM gastos WHERE proveedor_id=? AND tipo_comprobante_id=? AND serie_comprobante <=> ? AND numero_comprobante=? LIMIT 1 FOR UPDATE',
+      [proveedorId, tipoComprobanteId, serie, numeroComprobante],
+    )
+    if (duplicates.length) {
+      await connection.rollback()
+      res.status(409).json({ message: 'Ya existe un gasto con ese comprobante.' })
+      return
+    }
     const [result] = await connection.query<ResultSetHeader>(
       `INSERT INTO gastos
       (
@@ -118,37 +146,7 @@ export const crearGasto = async (
       ]
     )
 
-    /*
-     * 3. Crear movimiento de caja como EGRESO
-     */
-    await connection.query(
-      `INSERT INTO movimientos_caja
-      (
-        fondo_id,
-        tipo_movimiento,
-        referencia_tipo,
-        referencia_id,
-        descripcion,
-        monto,
-        usuario_id
-      )
-      VALUES (
-        ?,
-        'EGRESO',
-        'gastos',
-        ?,
-        ?,
-        ?,
-        ?
-      )`,
-      [
-        fondo_id,
-        gastoId,
-        `Gasto: ${motivo}`,
-        montoSeguro,
-        usuarioId,
-      ]
-    )
+    await registrarAuditoria(connection, { usuarioId, accion: 'crear', entidad: 'gasto', entidadId: gastoId, fondoId, despues: { estado: 'pendiente', monto: montoSeguro } })
 
     await connection.commit()
 
@@ -163,7 +161,6 @@ export const crearGasto = async (
 
     res.status(500).json({
       message: 'Error al guardar el gasto.',
-      detalles: error.sqlMessage || error.message,
     })
   } finally {
     connection.release()
@@ -270,7 +267,12 @@ export const obtenerGastos = async (
     /*
      * Parámetros seguros para MySQL
      */
-    const params: string[] = []
+    const params: Array<string | number> = []
+
+    if (!req.auth?.esAdministradorGlobal) {
+      sql += ' AND g.fondo_id IN (SELECT id FROM fondos_caja WHERE empresa_id=? AND departamento_id=?)'
+      params.push(String(req.auth?.empresaId || ''), Number(req.auth?.departamentoId || 0))
+    }
 
     /*
      * Filtrar por número de comprobante
@@ -305,11 +307,6 @@ export const obtenerGastos = async (
       params
     )
 
-    console.log('🔎 CONSULTA DE GASTOS')
-    console.log('Número:', numeroComprobante || 'TODOS')
-    console.log('Serie:', serieComprobante || 'TODAS')
-    console.log('Resultados:', rows.length)
-
     res.json(rows)
 
   } catch (error: any) {
@@ -317,20 +314,50 @@ export const obtenerGastos = async (
 
     res.status(500).json({
       message: 'Error al consultar los gastos.',
-      detalles: error.sqlMessage || error.message,
     })
   }
 }
 
 // Personas disponibles para indicar quién realizó el gasto.
-export const obtenerUsuariosGasto = async (_req: Request, res: Response): Promise<void> => {
+export const obtenerUsuariosGasto = async (req: Request, res: Response): Promise<void> => {
   try {
     const [rows] = await db.query<RowDataPacket[]>(
-      'SELECT id, nombre_completo FROM usuarios ORDER BY nombre_completo'
+      `SELECT id,nombre_completo FROM usuarios WHERE estado=1${req.auth?.esAdministradorGlobal ? '' : ' AND empresa_id=? AND departamento_id=?'} ORDER BY nombre_completo`,
+      req.auth?.esAdministradorGlobal ? [] : [req.auth?.empresaId, req.auth?.departamentoId],
     )
     res.json(rows)
   } catch (error: any) {
-    res.status(500).json({ message: 'No se pudieron obtener los usuarios.', detalles: error.message })
+    res.status(500).json({ message: 'No se pudieron obtener los usuarios.' })
+  }
+}
+
+// Catálogos necesarios para registrar un gasto. Los catálogos maestros son
+// globales, pero personas y fondos siempre respetan el alcance de la sesión.
+export const obtenerCatalogosGasto = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const organizationSql = req.auth?.esAdministradorGlobal
+      ? 'empresa_id IS NOT NULL AND departamento_id IS NOT NULL'
+      : 'empresa_id=? AND departamento_id=?'
+    const organizationParams = req.auth?.esAdministradorGlobal
+      ? []
+      : [req.auth?.empresaId, req.auth?.departamentoId]
+    const [tiposComprobante, proveedores, usuarios, tiposGasto, fondos] = await Promise.all([
+      db.query<RowDataPacket[]>('SELECT id,nombre FROM tipos_comprobante ORDER BY nombre'),
+      db.query<RowDataPacket[]>('SELECT id,nombre,nit FROM proveedores ORDER BY nombre'),
+      db.query<RowDataPacket[]>(`SELECT id,nombre_completo FROM usuarios WHERE estado=1 AND ${organizationSql} ORDER BY nombre_completo`, organizationParams),
+      db.query<RowDataPacket[]>('SELECT id,nombre FROM tipos_gasto ORDER BY nombre'),
+      db.query<RowDataPacket[]>(`SELECT id,mes,anio,monto_inicial,numero_cheque FROM fondos_caja WHERE estado='activo' AND ${organizationSql} ORDER BY anio DESC,mes DESC,id DESC`, organizationParams),
+    ])
+    res.json({
+      tiposComprobante: tiposComprobante[0],
+      proveedores: proveedores[0],
+      usuarios: usuarios[0],
+      tiposGasto: tiposGasto[0],
+      fondos: fondos[0],
+    })
+  } catch (error) {
+    console.error('Error consultando catálogos de gastos:', error)
+    res.status(500).json({ message: 'No fue posible cargar los catálogos del gasto.' })
   }
 }
 
@@ -338,33 +365,54 @@ export const obtenerUsuariosGasto = async (_req: Request, res: Response): Promis
 export const cambiarEstadoGasto = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   const id = Number(req.params.id)
   const { estado } = req.body
-  const usuarioId = req.user?.id
+  const usuarioId = req.auth?.id
 
   if (!Number.isInteger(id) || !usuarioId || !['aprobado', 'rechazado'].includes(estado)) {
     res.status(400).json({ message: 'Solicitud de aprobación inválida.' })
     return
   }
 
+  const connection = await db.getConnection()
   try {
-    const [result] = await db.query<ResultSetHeader>(
-      `UPDATE gastos
-       SET estado = ?,
-           aprobado_por = CASE WHEN ? = 'aprobado' THEN ? ELSE aprobado_por END,
-           aprobado_en = CASE WHEN ? = 'aprobado' THEN NOW() ELSE aprobado_en END,
-           revisado_por = ?, revisado_en = NOW()
-       WHERE id = ? AND estado IN ('pendiente', 'aprobado')`,
-      [estado, estado, usuarioId, estado, usuarioId, id],
+    await connection.beginTransaction()
+    const scope = req.auth?.esAdministradorGlobal ? ' AND f.empresa_id IS NOT NULL AND f.departamento_id IS NOT NULL' : ' AND f.empresa_id=? AND f.departamento_id=?'
+    const params = req.auth?.esAdministradorGlobal ? [id] : [id, req.auth?.empresaId, req.auth?.departamentoId]
+    const [rows] = await connection.query<RowDataPacket[]>(
+      `SELECT g.id,g.fondo_id,g.monto,g.motivo_gasto,g.estado,f.estado fondo_estado
+         FROM gastos g JOIN fondos_caja f ON f.id=g.fondo_id WHERE g.id=?${scope} FOR UPDATE`, params,
     )
-
-    if (!result.affectedRows) {
-      res.status(409).json({ message: 'El gasto no existe o ya fue rechazado.' })
+    const gasto = rows[0]
+    if (!gasto) { await connection.rollback(); res.status(404).json({ message: 'El gasto no existe.' }); return }
+    if (gasto.estado !== 'pendiente') { await connection.rollback(); res.status(409).json({ message: 'Solo los gastos pendientes pueden revisarse.' }); return }
+    if (gasto.fondo_estado !== 'activo') { await connection.rollback(); res.status(409).json({ message: 'El fondo está cerrado o liquidado.' }); return }
+    const [movements] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM movimientos_caja WHERE referencia_tipo='gastos' AND referencia_id=? FOR UPDATE`, [id],
+    )
+    if (movements.length) {
+      await connection.rollback()
+      res.status(409).json({ message: 'El gasto presenta una inconsistencia histórica y requiere auditoría antes de continuar.' })
       return
     }
-
+    if (estado === 'aprobado') {
+      await connection.query(
+        `INSERT INTO movimientos_caja (fondo_id,tipo_movimiento,referencia_tipo,referencia_id,descripcion,monto,usuario_id)
+         VALUES (?,'EGRESO','gastos',?,?,?,?)`, [gasto.fondo_id,id,`Gasto: ${gasto.motivo_gasto}`,gasto.monto,usuarioId],
+      )
+    }
+    await connection.query(
+      `UPDATE gastos SET estado=?,aprobado_por=IF(?='aprobado',?,NULL),aprobado_en=IF(?='aprobado',NOW(),NULL),revisado_por=?,revisado_en=NOW() WHERE id=?`,
+      [estado,estado,usuarioId,estado,usuarioId,id],
+    )
+    await registrarAuditoria(connection, { usuarioId, accion: estado === 'aprobado' ? 'aprobar' : 'rechazar', entidad: 'gasto', entidadId: id, fondoId: Number(gasto.fondo_id), antes: { estado: 'pendiente' }, despues: { estado } })
+    await connection.commit()
     res.json({ message: `Gasto ${estado} correctamente.` })
-  } catch (error: any) {
-    res.status(500).json({ message: 'No se pudo actualizar el gasto.', detalles: error.message })
   }
+  catch (error) {
+    await connection.rollback()
+    console.error('Error actualizando gasto:', error)
+    res.status(500).json({ message: 'No se pudo actualizar el gasto.' })
+  }
+  finally { connection.release() }
 }
 
 
@@ -391,6 +439,20 @@ export const eliminarGasto = async (
   try {
     await connection.beginTransaction()
 
+    const scope = req.auth?.esAdministradorGlobal ? ' AND f.empresa_id IS NOT NULL AND f.departamento_id IS NOT NULL' : ' AND f.empresa_id=? AND f.departamento_id=?'
+    const params = req.auth?.esAdministradorGlobal ? [id] : [id, req.auth?.empresaId, req.auth?.departamentoId]
+    const [rows] = await connection.query<RowDataPacket[]>(
+      `SELECT g.id,g.estado,g.fondo_id,f.estado fondo_estado FROM gastos g JOIN fondos_caja f ON f.id=g.fondo_id WHERE g.id=?${scope} FOR UPDATE`, params,
+    )
+    const gasto = rows[0]
+    if (!gasto) { await connection.rollback(); res.status(404).json({ message: 'El gasto no existe.' }); return }
+    if (gasto.estado !== 'pendiente' || gasto.fondo_estado !== 'activo') {
+      await connection.rollback(); res.status(409).json({ message: 'Solo puede eliminarse un gasto pendiente de un fondo activo.' }); return
+    }
+    const [movements] = await connection.query<RowDataPacket[]>(`SELECT id FROM movimientos_caja WHERE referencia_tipo='gastos' AND referencia_id=? LIMIT 1`, [id])
+    if (movements.length) { await connection.rollback(); res.status(409).json({ message: 'El gasto requiere auditoría antes de eliminarse.' }); return }
+    await registrarAuditoria(connection, { usuarioId: req.auth!.id, accion: 'eliminar_borrador', entidad: 'gasto', entidadId: Number(id), fondoId: Number(gasto.fondo_id), antes: gasto })
+
     /*
      * Eliminar relaciones del gasto
      */
@@ -416,17 +478,6 @@ export const eliminarGasto = async (
     await connection.query(
       `DELETE FROM gasto_tipos_gasto
        WHERE gasto_id = ?`,
-      [id]
-    )
-
-    /*
-     * Eliminar movimiento de caja relacionado
-     */
-
-    await connection.query(
-      `DELETE FROM movimientos_caja
-       WHERE referencia_tipo = 'gastos'
-       AND referencia_id = ?`,
       [id]
     )
 
@@ -463,7 +514,6 @@ export const eliminarGasto = async (
 
     res.status(500).json({
       message: 'Error al eliminar el gasto.',
-      detalles: error.sqlMessage || error.message,
     })
 
   } finally {

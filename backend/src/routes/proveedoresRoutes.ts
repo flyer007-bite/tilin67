@@ -1,12 +1,12 @@
 import { Router } from 'express'
 import { db } from '../config/db'
-import { bloquearConsultor, requerirAutenticacion } from '../middlewares/auth.middleware'
+import { requerirAutenticacion, requerirPermiso } from '../middlewares/auth.middleware'
 
 const router = Router()
 router.use(requerirAutenticacion)
 
 // GET: Obtener todos los proveedores
-router.get('/', async (req, res) => {
+router.get('/', requerirPermiso('proveedores', 'ver'), async (_req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM proveedores ORDER BY id DESC')
     res.json(rows)
@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 })
 
 // POST: Crear un nuevo proveedor
-router.post('/', bloquearConsultor, async (req, res) => {
+router.post('/', requerirPermiso('proveedores', 'crear'), async (req, res) => {
   const { nombre, nit, telefono, direccion } = req.body
 
   if (!nombre) {
@@ -44,7 +44,7 @@ router.post('/', bloquearConsultor, async (req, res) => {
 })
 
 // DELETE: Eliminar un proveedor por ID
-router.delete('/:id', bloquearConsultor, async (req, res) => {
+router.delete('/:id', requerirPermiso('proveedores', 'eliminar'), async (req, res) => {
   const { id } = req.params
 
   try {

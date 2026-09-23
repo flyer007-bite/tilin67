@@ -5,21 +5,23 @@ import {
   crearGasto,
   obtenerGastos,
   obtenerUsuariosGasto,
+  obtenerCatalogosGasto,
   cambiarEstadoGasto,
   eliminarGasto,
 } from '../controllers/gastosController'
-import { bloquearConsultor, bloquearOperador, requerirAutenticacion } from '../middlewares/auth.middleware'
+import { requerirAutenticacion, requerirPermiso } from '../middlewares/auth.middleware'
 
 const router = Router()
 router.use(requerirAutenticacion)
 
-router.get('/', obtenerGastos)
-router.get('/usuarios', obtenerUsuariosGasto)
+router.get('/', requerirPermiso('gastos', 'ver'), obtenerGastos)
+router.get('/catalogos', requerirPermiso('gastos', 'ver'), obtenerCatalogosGasto)
+router.get('/usuarios', requerirPermiso('gastos', 'ver'), obtenerUsuariosGasto)
 
-router.post('/', bloquearConsultor, crearGasto)
+router.post('/', requerirPermiso('gastos', 'crear'), crearGasto)
 
-router.patch('/:id/estado', bloquearOperador, cambiarEstadoGasto)
+router.patch('/:id/estado', requerirPermiso('gastos', 'aprobar'), cambiarEstadoGasto)
 
-router.delete('/:id', bloquearOperador, eliminarGasto)
+router.delete('/:id', requerirPermiso('gastos', 'eliminar'), eliminarGasto)
 
 export default router

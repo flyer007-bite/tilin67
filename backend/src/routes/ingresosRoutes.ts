@@ -5,19 +5,21 @@ import {
   crearIngreso,
   obtenerIngresos,
   eliminarIngreso,
+  obtenerFondosActivos,
 } from '../controllers/ingresosController'
-import { bloquearConsultor, bloquearOperador, requerirAutenticacion } from '../middlewares/auth.middleware'
+import { requerirAutenticacion, requerirPermiso } from '../middlewares/auth.middleware'
 
 const router = Router()
 router.use(requerirAutenticacion)
 
 // Obtener todos los ingresos
-router.get('/', obtenerIngresos)
+router.get('/', requerirPermiso('ingresos', 'ver'), obtenerIngresos)
+router.get('/fondos-activos', requerirPermiso('ingresos', 'ver'), obtenerFondosActivos)
 
 // Crear un ingreso
-router.post('/', bloquearConsultor, crearIngreso)
+router.post('/', requerirPermiso('ingresos', 'crear'), crearIngreso)
 
 // Eliminar un ingreso
-router.delete('/:id', bloquearOperador, eliminarIngreso)
+router.delete('/:id', requerirPermiso('ingresos', 'eliminar'), eliminarIngreso)
 
 export default router

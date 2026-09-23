@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { PerfectScrollbar } from 'vue3-perfect-scrollbar'
+import { $api, clearClientSession } from '@/utils/api'
 
 const router = useRouter()
 const ability = useAbility()
@@ -10,11 +11,8 @@ const userData = useCookie<any>('userData')
 const logout = async () => {
   // Limpiar la sesión completa antes de navegar; de lo contrario el guardia
   // puede interpretar que el usuario todavía sigue autenticado.
-  useCookie('accessToken').value = null
-  userData.value = null
-  useCookie('userAbilityRules').value = null
-  localStorage.removeItem('accessToken')
-  localStorage.removeItem('userData')
+  try { await $api('/auth/logout', { method: 'POST' }) }
+  finally { clearClientSession() }
   ability.update([])
 
   await router.replace({ name: 'login' })

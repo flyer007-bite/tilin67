@@ -5,9 +5,15 @@ import navItems from '@/navigation/vertical'
 import Footer from '@/layouts/components/Footer.vue'
 import NavBarNotifications from '@/layouts/components/NavBarNotifications.vue'
 import UserProfile from '@/layouts/components/UserProfile.vue'
+import { useLayoutConfigStore } from '@layouts/stores/config'
 
 // Layout
 import { VerticalNavLayout } from '@layouts'
+
+const configStore = useLayoutConfigStore()
+const alternarBarraLateral = () => {
+  configStore.isVerticalNavCollapsed = !configStore.isVerticalNavCollapsed
+}
 </script>
 
 <template>
@@ -25,6 +31,21 @@ import { VerticalNavLayout } from '@layouts'
             size="26"
             icon="tabler-menu-2"
           />
+        </IconBtn>
+
+        <!-- Contraer/expandir la barra lateral en escritorio -->
+        <IconBtn
+          class="sidebar-toggle ms-n2 d-none d-lg-inline-flex"
+          :aria-label="configStore.isVerticalNavCollapsed ? 'Mostrar menú lateral' : 'Ocultar menú lateral'"
+          @click="alternarBarraLateral"
+        >
+          <VIcon
+            size="23"
+            :icon="configStore.isVerticalNavCollapsed ? 'tabler-layout-sidebar-left-expand' : 'tabler-layout-sidebar-left-collapse'"
+          />
+          <VTooltip activator="parent" location="bottom">
+            {{ configStore.isVerticalNavCollapsed ? 'Mostrar menú' : 'Ocultar menú' }}
+          </VTooltip>
         </IconBtn>
 
         <!-- Empuja los controles hacia la derecha -->

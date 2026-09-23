@@ -1,275 +1,91 @@
-```vue
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import type { Proveedor } from '@/types/cajaChica'
+import { useTableNumbering } from '@/composables/useTableNumbering'
+const { numberPage, numberPageSize, rowNumber } = useTableNumbering()
+import { computed, onMounted, ref } from 'vue'
+import { $api } from '@/utils/api'
+
+type Rule = { action: string; subject: string }
+interface Proveedor { id?: number; nombre: string; nit: string; telefono: string; direccion?: string }
+interface ProveedorTabla extends Proveedor { numero: number }
 
 const proveedores = ref<Proveedor[]>([])
-const loading = ref(false)
-const dialog = ref(false)
-
-const nuevoProveedor = ref<Proveedor>({
-  nombre: '',
-  nit: '',
-  telefono: ''
+const proveedoresTabla = computed<ProveedorTabla[]>(() => {
+  const ordenados = [...proveedores.value].sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+  return ordenados.map((item, index) => ({ ...item, numero: index + 1 }))
 })
-
+const loading = ref(false)
+const guardando = ref(false)
+const dialog = ref(false)
+const error = ref('')
+const ok = ref('')
+const nuevoProveedor = ref<Proveedor>({ nombre: '', nit: '', telefono: '', direccion: '' })
+const userData = useCookie<Record<string, any> | null>('userData')
+const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
+const isAdmin = computed(() => ['admin', 'administrador'].includes(String(userData.value?.role || '').toLowerCase()))
+const puede = (accion: string) => isAdmin.value || (abilityRules.value || []).some(rule =>
+  (rule.subject === 'proveedores' || rule.subject === 'all') && (rule.action === accion || rule.action === 'manage'),
+)
+const puedeCrear = computed(() => puede('crear'))
+const puedeEliminar = computed(() => puede('eliminar'))
 const headers = [
-  { title: 'ID', key: 'id' },
-  { title: 'Nombre / Razón Social', key: 'nombre' },
-  { title: 'NIT', key: 'nit' },
-  { title: 'Teléfono', key: 'telefono' },
-  { title: 'Acciones', key: 'actions', sortable: false }
+  { title: 'No.', key: 'numero', sortable: false }, { title: 'Nombre / Razón Social', key: 'nombre' }, { title: 'NIT', key: 'nit' },
+  { title: 'Teléfono', key: 'telefono' }, { title: 'Dirección', key: 'direccion' }, { title: 'Acciones', key: 'actions', sortable: false },
 ]
 
-// Cargar proveedores
 const fetchProveedores = async () => {
-  loading.value = true
-
-  try {
-    const res = await fetch('http://localhost:4000/api/proveedores')
-
-    if (!res.ok) {
-      throw new Error('Error al obtener proveedores')
-    }
-
-    proveedores.value = await res.json()
-  } catch (error) {
-    console.error('Error al cargar proveedores:', error)
-    alert('No se pudieron cargar los proveedores')
-  } finally {
-    loading.value = false
-  }
+  loading.value = true; error.value = ''
+  try { proveedores.value = await $api<Proveedor[]>('/proveedores') }
+  catch (e: any) { error.value = e?.data?.message || e?.message || 'No se pudieron cargar los proveedores.' }
+  finally { loading.value = false }
 }
 
-// Limpiar NIT
-const limpiarNit = () => {
-  if (nuevoProveedor.value.nit) {
-    nuevoProveedor.value.nit =
-      nuevoProveedor.value.nit.replace(/[-\s]/g, '')
-  }
-}
+const limpiarNit = () => { nuevoProveedor.value.nit = String(nuevoProveedor.value.nit || '').replace(/[-\s]/g, '').trim() }
+const abrirDialog = () => { nuevoProveedor.value = { nombre: '', nit: '', telefono: '', direccion: '' }; dialog.value = true }
 
-// Guardar proveedor
 const guardarProveedor = async () => {
-  // Validar nombre
-  if (!nuevoProveedor.value.nombre.trim()) {
-    alert('El nombre del proveedor es obligatorio')
-    return
-  }
-
-  // Quitar guiones y espacios del NIT
-  limpiarNit()
-
-  // Verificar si el NIT ya existe
-  if (nuevoProveedor.value.nit) {
-    const nitExiste = proveedores.value.some(
-      proveedor =>
-        proveedor.nit?.replace(/[-\s]/g, '') ===
-        nuevoProveedor.value.nit
-    )
-
-    if (nitExiste) {
-      alert('Ya existe un proveedor registrado con este NIT.')
-      return
-    }
-  }
-
+  error.value = ''; ok.value = ''; limpiarNit()
+  if (!nuevoProveedor.value.nombre.trim()) { error.value = 'El nombre del proveedor es obligatorio.'; return }
+  guardando.value = true
   try {
-    const res = await fetch('http://localhost:4000/api/proveedores', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(nuevoProveedor.value)
-    })
-
-    if (res.ok) {
-      await fetchProveedores()
-
-      dialog.value = false
-
-      nuevoProveedor.value = {
-        nombre: '',
-        nit: '',
-        telefono: ''
-      }
-
-      alert('Proveedor registrado correctamente')
-    } else {
-      let mensaje = 'Error al guardar el proveedor'
-
-      try {
-        const error = await res.json()
-        mensaje = error.message || mensaje
-      } catch {
-        // Si el backend no devuelve JSON
-      }
-
-      alert(mensaje)
-    }
-  } catch (error) {
-    console.error('Error al guardar proveedor:', error)
-    alert('No se pudo conectar con el servidor')
+    await $api('/proveedores', { method: 'POST', body: {
+      nombre: nuevoProveedor.value.nombre.trim(), nit: nuevoProveedor.value.nit,
+      telefono: String(nuevoProveedor.value.telefono || '').trim(), direccion: String(nuevoProveedor.value.direccion || '').trim(),
+    } })
+    ok.value = 'Proveedor registrado correctamente.'
+    dialog.value = false
+    await fetchProveedores()
   }
+  catch (e: any) { error.value = e?.data?.message || e?.message || 'No fue posible guardar el proveedor.' }
+  finally { guardando.value = false }
 }
 
-// Eliminar proveedor
-const eliminarProveedor = async (id: number) => {
-  const confirmar = confirm(
-    '¿Estás seguro de que deseas eliminar este proveedor?'
-  )
-
-  if (!confirmar) return
-
+const eliminarProveedor = async (id?: number) => {
+  error.value = ''; ok.value = ''
+  if (!id || !confirm('¿Eliminar este proveedor? Solo puede eliminarse si no tiene gastos relacionados.')) return
   try {
-    const res = await fetch(
-      `http://localhost:4000/api/proveedores/${id}`,
-      {
-        method: 'DELETE'
-      }
-    )
-
-    if (res.ok) {
-      await fetchProveedores()
-      alert('Proveedor eliminado correctamente')
-    } else {
-      alert('No se pudo eliminar el proveedor')
-    }
-  } catch (error) {
-    console.error('Error al eliminar proveedor:', error)
-    alert('No se pudo conectar con el servidor')
+    await $api(`/proveedores/${id}`, { method: 'DELETE' })
+    ok.value = 'Proveedor eliminado correctamente.'
+    await fetchProveedores()
   }
-}
-
-// Abrir modal
-const abrirDialog = () => {
-  nuevoProveedor.value = {
-    nombre: '',
-    nit: '',
-    telefono: ''
-  }
-
-  dialog.value = true
+  catch (e: any) { error.value = e?.data?.message || e?.message || 'No fue posible eliminar el proveedor.' }
 }
 
 onMounted(fetchProveedores)
 </script>
 
 <template>
-  <VCard title="Gestión de Proveedores">
-    <VCardText class="d-flex justify-space-between align-center">
-      <span class="text-subtitle-1">
-        Lista de proveedores registrados
-      </span>
-
-      <VBtn
-        color="primary"
-        prepend-icon="tabler-plus"
-        @click="abrirDialog"
-      >
-        Nuevo Proveedor
-      </VBtn>
+  <div class="admin-page"><section class="page-hero admin-hero d-flex flex-wrap justify-space-between align-center ga-3 mb-6"><div class="d-flex align-center ga-4"><VAvatar color="primary" variant="tonal" rounded size="58"><VIcon icon="tabler-building-store" size="30"/></VAvatar><div><div class="process-kicker">Directorio comercial</div><h1 class="text-h4 font-weight-bold mb-1">Proveedores</h1><p class="text-medium-emphasis mb-0">Administra las entidades asociadas a los gastos.</p></div></div><VBtn v-if="puedeCrear" color="primary" size="large" prepend-icon="tabler-plus" @click="abrirDialog">Nuevo Proveedor</VBtn></section>
+  <VCard class="module-card"><VCardItem class="module-header"><VCardTitle>Directorio de proveedores</VCardTitle><template #append><VChip color="primary" variant="tonal">{{ proveedoresTabla.length }} registrados</VChip></template></VCardItem>
+    <VCardText class="pa-6">
+      <AppErrorAlert v-model="error" />
+      <VAlert v-if="ok" type="success" variant="tonal" class="mb-4">{{ ok }}</VAlert>
+      <VDataTable v-model:page="numberPage" v-model:items-per-page="numberPageSize" :headers="headers" :items="proveedoresTabla" :loading="loading" class="product-table"><template #item.numero="{ index }">{{ rowNumber(index) }}</template><template #item.nombre="{ item }"><div class="d-flex align-center ga-2"><VAvatar size="32" color="primary" variant="tonal"><VIcon icon="tabler-building" size="17"/></VAvatar><strong>{{ item.nombre }}</strong></div></template>
+        <template #item.nit="{ item }">{{ item.nit || 'Sin NIT' }}</template>
+        <template #item.telefono="{ item }">{{ item.telefono || '—' }}</template>
+        <template #item.direccion="{ item }">{{ item.direccion || '—' }}</template>
+        <template #item.actions="{ item }"><VBtn v-if="puedeEliminar" icon size="small" color="error" variant="tonal" title="Eliminar proveedor" aria-label="Eliminar proveedor" @click="eliminarProveedor(item.id)"><VIcon icon="tabler-trash" /></VBtn></template>
+      </VDataTable>
     </VCardText>
-
-    <!-- Tabla de proveedores -->
-    <VDataTable
-      :headers="headers"
-      :items="proveedores"
-      :loading="loading"
-      class="elevation-1"
-    >
-      <!-- NIT -->
-      <template #item.nit="{ item }">
-        {{ item.nit || 'Sin NIT' }}
-      </template>
-
-      <!-- Acciones -->
-      <template #item.actions="{ item }">
-        <VBtn
-          icon
-          size="small"
-          color="error"
-          variant="text"
-          @click="eliminarProveedor(item.id!)"
-        >
-          <VIcon icon="tabler-trash" />
-        </VBtn>
-      </template>
-    </VDataTable>
-
-    <!-- Modal para agregar proveedor -->
-    <VDialog
-      v-model="dialog"
-      max-width="500px"
-    >
-      <VCard title="Agregar Proveedor">
-        <VCardText>
-          <VRow>
-            <!-- Nombre -->
-            <VCol cols="12">
-              <VTextField
-                v-model="nuevoProveedor.nombre"
-                label="Nombre / Razón Social *"
-                required
-              />
-            </VCol>
-
-            <!-- NIT -->
-            <VCol cols="12" md="6">
-              <VTextField
-                v-model="nuevoProveedor.nit"
-                label="NIT"
-                placeholder="Ej. 12345678"
-                @update:model-value="limpiarNit"
-              />
-            </VCol>
-
-            <!-- Teléfono -->
-            <VCol cols="12" md="6">
-              <VTextField
-                v-model="nuevoProveedor.telefono"
-                label="Teléfono"
-              />
-            </VCol>
-          </VRow>
-
-          <div class="text-caption text-medium-emphasis mt-2">
-            El NIT se guardará sin guiones ni espacios.
-          </div>
-        </VCardText>
-
-        <!-- Botones -->
-        <VCardActions class="justify-end">
-          <VBtn
-            color="secondary"
-            variant="outlined"
-            @click="dialog = false"
-          >
-            Cancelar
-          </VBtn>
-
-          <VBtn
-            color="primary"
-            @click="guardarProveedor"
-          >
-            Guardar
-          </VBtn>
-        </VCardActions>
-      </VCard>
-    </VDialog>
-  </VCard>
+    <VDialog v-model="dialog" max-width="560"><VCard title="Agregar Proveedor"><VCardText><VRow><VCol cols="12"><VTextField v-model="nuevoProveedor.nombre" label="Nombre / Razón Social *" maxlength="150" counter /></VCol><VCol cols="12" md="6"><VTextField v-model="nuevoProveedor.nit" label="NIT" maxlength="30" @blur="limpiarNit" /></VCol><VCol cols="12" md="6"><VTextField v-model="nuevoProveedor.telefono" label="Teléfono" maxlength="30" /></VCol><VCol cols="12"><VTextarea v-model="nuevoProveedor.direccion" label="Dirección" maxlength="500" counter /></VCol></VRow></VCardText><VCardActions class="justify-end"><VBtn variant="outlined" @click="dialog = false">Cancelar</VBtn><VBtn color="primary" :loading="guardando" @click="guardarProveedor">Guardar</VBtn></VCardActions></VCard></VDialog>
+  </VCard></div>
 </template>
-```
-
-Con este reemplazo ya tendrás:
-
-* ✅ NIT `1234567-8` → se convierte automáticamente en `12345678`.
-* ✅ NIT con espacios → también los elimina.
-* ✅ Comprueba si el NIT ya está registrado antes de guardar.
-* ✅ Si está repetido, muestra **"Ya existe un proveedor registrado con este NIT."**
-* ✅ Limpia el formulario después de guardar.
-* ✅ Confirma antes de eliminar un proveedor.
-* ✅ Mantiene tu conexión actual a `http://localhost:4000/api/proveedores`.
-
-**Importante:** esta comprobación de NIT se hace con los proveedores que ya cargó el frontend. Para que quede **100% segura**, también debemos poner una restricción/comprobación en tu backend.
-    

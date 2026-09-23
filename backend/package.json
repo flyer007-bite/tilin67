@@ -6,7 +6,10 @@
     "scripts": {
         "dev": "tsx watch src/index.ts",
         "build": "tsc",
+        "test": "npm run build && node --test tests/*.test.cjs",
         "start": "node dist/index.js",
+        "migrate": "tsx src/scripts/migrate.ts",
+        "audit": "tsx src/scripts/audit.ts",
         "seed:organization-users": "node scripts/seed-organization-users.cjs"
     },
     "dependencies": {
@@ -25,5 +28,6 @@
         "@types/node": "^20.12.7",
         "tsx": "^4.7.2",
         "typescript": "^5.4.5"
-    }
+    },
+    "engines": { "node": ">=22 <23" }
 }

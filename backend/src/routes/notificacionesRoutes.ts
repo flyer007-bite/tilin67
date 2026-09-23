@@ -1,9 +1,9 @@
 import { Router } from 'express'
 import { obtenerNotificaciones } from '../controllers/notificacionesController'
-import { requerirAutenticacion } from '../middlewares/auth.middleware'
+import { requerirAutenticacion, requerirPermiso } from '../middlewares/auth.middleware'
 
 const router = Router()
 router.use(requerirAutenticacion)
-router.get('/', obtenerNotificaciones)
+router.get('/', requerirPermiso('notificaciones', 'ver'), obtenerNotificaciones)
 
 export default router

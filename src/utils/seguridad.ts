@@ -1,1 +1,4 @@
-export const apiSeguridad=async(ruta:string,opciones:RequestInit={})=>{const r=await fetch(`/api/seguridad${ruta}`,{...opciones,headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('accessToken')||''}`,...(opciones.headers||{})}});const d=await r.json();if(!r.ok)throw new Error(d.message||'Error de seguridad.');return d}
+import { $api } from './api'
+
+export const apiSeguridad = <T = any>(ruta: string, opciones: Record<string, any> = {}) =>
+  $api<T>(`/seguridad${ruta}`, opciones)

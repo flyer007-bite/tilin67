@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { Notification } from '@layouts/types'
+import { $api } from '@/utils/api'
 
 type AvisoApi = {
   id: string
@@ -14,10 +15,8 @@ const notifications = ref<Notification[]>([])
 
 const cargarNotificaciones = async () => {
   try {
-    const response = await fetch('http://localhost:4000/api/notificaciones')
-    if (!response.ok) return
-    const data = await response.json()
-    notifications.value = (data.notificaciones as AvisoApi[]).map((aviso, index) => ({
+    const data = await $api<{ notificaciones: AvisoApi[] }>('/notificaciones')
+    notifications.value = (data.notificaciones || []).map((aviso, index) => ({
       id: index + 1,
       text: aviso.id === 'revision-caja' ? 'RC' : 'CH',
       title: aviso.titulo,

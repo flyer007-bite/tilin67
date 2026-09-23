@@ -5,7 +5,11 @@ require('dotenv').config()
 const mysql = require('mysql2/promise')
 const bcrypt = require('bcryptjs')
 
-const password = process.env.DEFAULT_USER_PASSWORD || 'CajaChica2026!'
+const password = process.env.DEFAULT_USER_PASSWORD
+if (!password || password.length < 12 || password.length > 72) {
+  console.error('DEFAULT_USER_PASSWORD es obligatoria y debe tener entre 12 y 72 caracteres.')
+  process.exit(1)
+}
 
 const slug = value => String(value)
   .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -13,11 +17,11 @@ const slug = value => String(value)
 
 async function main() {
   const db = await mysql.createConnection({
-    host: process.env.DB_HOST || '127.0.0.1',
-    port: Number(process.env.DB_PORT || 8889),
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || 'root',
-    database: process.env.DB_NAME || 'caja_chica_db',
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT || 3306),
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME,
   })
 
   try {
@@ -56,7 +60,7 @@ async function main() {
       }
     }
     await db.commit()
-    console.log(`Cuentas creadas: ${created}. Ya existentes: ${existing}. Contraseña asignada: ${password}`)
+    console.log(`Cuentas creadas: ${created}. Ya existentes: ${existing}.`)
   } catch (error) {
     await db.rollback()
     throw error

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { $api } from '@/utils/api'
 
 type Movimiento = { tipo: 'Ingreso' | 'Egreso'; fecha: string; descripcion: string; monto: number; estado: string; persona_realizo_gasto?: string | null }
 type Resumen = {
   ingresos: number
   egresos: number
+  fondosIniciales: number
   balance: number
   cantidadIngresos: number
   cantidadEgresos: number
@@ -18,22 +20,8 @@ type Resumen = {
 const resumen = ref<Resumen | null>(null)
 const loading = ref(false)
 const error = ref('')
-const esOperador = computed(() => {
-  try {
-    const role = String(JSON.parse(localStorage.getItem('userData') || '{}').role || '').toLowerCase()
-    return role === 'operador caja chica' || role.endsWith(' - usuario')
-  } catch {
-    return false
-  }
-})
-const organizacionActual = computed(() => {
-  try {
-    const user = JSON.parse(localStorage.getItem('userData') || '{}')
-    return [user.empresa, user.departamento].filter(Boolean).join(' · ')
-  } catch {
-    return ''
-  }
-})
+const userData = useCookie<Record<string, any> | null>('userData')
+const esOperador = computed(() => String(userData.value?.role || '').toLowerCase() === 'operador caja chica')
 const anioSeleccionado = ref(new Date().getFullYear())
 const mesSeleccionado = ref<number | null>(null)
 const aniosHasta2030 = Array.from({ length: 2030 - 2020 + 1 }, (_, index) => 2020 + index).reverse()
@@ -66,13 +54,11 @@ const cargarDashboard = async () => {
   try {
     const params = new URLSearchParams({ anio: String(anioSeleccionado.value) })
     if (mesSeleccionado.value) params.set('mes', String(mesSeleccionado.value))
-    const response = await fetch(`http://localhost:4000/api/reportes/dashboard?${params}`)
-    if (!response.ok) throw new Error()
-    resumen.value = await response.json()
+    resumen.value = await $api<Resumen>(`/reportes/dashboard?${params}`)
     if (!resumen.value.anios.includes(anioSeleccionado.value))
       anioSeleccionado.value = resumen.value.anio
-  } catch {
-    error.value = 'No se pudieron cargar los datos de Caja Chica.'
+  } catch (e: any) {
+    error.value = e?.data?.message || e?.message || 'No se pudieron cargar los datos de Caja Chica.'
   } finally {
     loading.value = false
   }
@@ -81,8 +67,9 @@ const cargarDashboard = async () => {
 const moneda = (valor: number) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(Number(valor || 0))
 const fecha = (valor: string) => valor ? new Date(`${valor.slice(0, 10)}T00:00:00`).toLocaleDateString('es-GT') : ''
 const porcentajeEgresos = computed(() => {
-  if (!resumen.value?.ingresos) return 0
-  return Math.min(100, Math.round((resumen.value.egresos / resumen.value.ingresos) * 100))
+  const disponible = Number(resumen.value?.fondosIniciales || 0) + Number(resumen.value?.ingresos || 0)
+  if (!disponible) return 0
+  return Math.min(100, Math.round((Number(resumen.value?.egresos || 0) / disponible) * 100))
 })
 
 const headers = [
@@ -115,17 +102,14 @@ onMounted(cargarDashboard)
 </script>
 
 <template>
-  <div>
-    <div class="d-flex align-center justify-space-between flex-wrap gap-4 mb-6">
+  <div class="product-page dashboard-page">
+    <div class="page-hero d-flex align-center justify-space-between flex-wrap gap-4 mb-6">
       <div>
         <div class="d-flex align-center ga-2">
           <VIcon icon="tabler-layout-dashboard" size="30" color="primary" />
           <h3 class="text-h4 font-weight-bold">{{ esOperador ? 'Mi Dashboard de Caja Chica' : 'Dashboard de Caja Chica' }}</h3>
         </div>
         <p class="text-body-1 mb-0">{{ esOperador ? 'Consulta los movimientos, ingresos y egresos disponibles.' : 'Resumen actualizado de ingresos, egresos y disponibilidad.' }}</p>
-        <VChip v-if="organizacionActual" class="mt-3" color="primary" variant="tonal" prepend-icon="tabler-building-community">
-          {{ organizacionActual }}
-        </VChip>
         <VChip color="primary" variant="tonal" class="mt-2" prepend-icon="tabler-calendar-week">
           Semana {{ semanaActual.numero }} · {{ semanaActual.rango }}
         </VChip>
@@ -141,7 +125,7 @@ onMounted(cargarDashboard)
 
     <VRow v-if="resumen" class="match-height">
       <VCol cols="12" md="4">
-        <VCard>
+        <VCard class="metric-card metric-card--income">
           <VCardText>
             <VAvatar color="success" variant="tonal" rounded size="44"><VIcon icon="tabler-arrow-down-circle" size="26" /></VAvatar>
             <p class="text-h6 mt-4 mb-1">Ingresos</p>
@@ -151,7 +135,7 @@ onMounted(cargarDashboard)
         </VCard>
       </VCol>
       <VCol cols="12" md="4">
-        <VCard>
+        <VCard class="metric-card metric-card--expense">
           <VCardText>
             <VAvatar color="error" variant="tonal" rounded size="44"><VIcon icon="tabler-arrow-up-circle" size="26" /></VAvatar>
             <p class="text-h6 mt-4 mb-1">Egresos</p>
@@ -161,19 +145,19 @@ onMounted(cargarDashboard)
         </VCard>
       </VCol>
       <VCol cols="12" md="4">
-        <VCard>
+        <VCard class="metric-card metric-card--balance">
           <VCardText>
             <VAvatar :color="resumen.balance >= 0 ? 'primary' : 'warning'" variant="tonal" rounded size="44"><VIcon icon="tabler-wallet" size="26" /></VAvatar>
             <p class="text-h6 mt-4 mb-1">Saldo disponible</p>
             <h3 class="text-h4">{{ moneda(resumen.balance) }}</h3>
-            <p class="mb-2 text-body-2">Egresos equivalentes al {{ porcentajeEgresos }}% de los ingresos.</p>
+            <p class="mb-2 text-body-2">Egresos equivalentes al {{ porcentajeEgresos }}% de los fondos disponibles.</p>
             <VProgressLinear :model-value="porcentajeEgresos" color="warning" rounded height="7" />
           </VCardText>
         </VCard>
       </VCol>
 
       <VCol cols="12" md="5">
-        <VCard>
+        <VCard class="surface-card h-100">
           <VCardItem>
             <template #prepend><VIcon icon="tabler-chart-bar" size="24" /></template>
             <VCardTitle>Resumen del período</VCardTitle>
@@ -187,7 +171,7 @@ onMounted(cargarDashboard)
       </VCol>
 
       <VCol cols="12" md="7">
-        <VCard>
+        <VCard class="surface-card h-100">
           <VCardItem>
             <template #prepend><VIcon icon="tabler-history" size="24" /></template>
             <VCardTitle>Movimientos recientes</VCardTitle>

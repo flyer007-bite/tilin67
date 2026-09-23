@@ -11,6 +11,7 @@ defineProps<{
 
 const configStore = useLayoutConfigStore()
 const hideTitleAndBadge = configStore.isVerticalNavMini()
+const router = useRouter()
 </script>
 
 <template>
@@ -22,11 +23,11 @@ const hideTitleAndBadge = configStore.isVerticalNavMini()
     <Component
       :is="item.to ? 'RouterLink' : 'a'"
       v-bind="getComputedNavLinkToProp(item)"
-      :class="{ 'router-link-active router-link-exact-active': isNavLinkActive(item, $router) }"
+      :class="{ 'router-link-active router-link-exact-active': isNavLinkActive(item, router) }"
     >
       <Component
         :is="layoutConfig.app.iconRenderer || 'div'"
-        v-bind="item.icon || layoutConfig.verticalNav.defaultNavItemIconProps"
+        v-bind="(item.icon || layoutConfig.verticalNav.defaultNavItemIconProps) as any"
         class="nav-item-icon"
       />
       <TransitionGroup name="transition-slide-x">

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { $api } from '@/utils/api'
 
 type Notificacion = {
   id: string
@@ -22,12 +23,10 @@ const cargar = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await fetch('http://localhost:4000/api/notificaciones')
-    if (!response.ok) throw new Error()
-    const data = await response.json()
+    const data = await $api<{ notificaciones: Notificacion[] }>('/notificaciones')
     notificaciones.value = data.notificaciones
-  } catch {
-    error.value = 'No se pudieron cargar las notificaciones.'
+  } catch (e: any) {
+    error.value = e?.data?.message || e?.message || 'No se pudieron cargar las notificaciones.'
   } finally {
     loading.value = false
   }
@@ -37,14 +36,8 @@ onMounted(cargar)
 </script>
 
 <template>
-  <div>
-    <div class="d-flex align-center justify-space-between flex-wrap gap-3 mb-6">
-      <div>
-        <h2 class="text-h4 font-weight-bold">Notificaciones</h2>
-        <p class="text-body-1 text-medium-emphasis mb-0">Recordatorios automáticos de Caja Chica.</p>
-      </div>
-      <VBtn color="primary" prepend-icon="ri-refresh-line" :loading="loading" @click="cargar">Actualizar</VBtn>
-    </div>
+  <div class="admin-page">
+    <section class="page-hero admin-hero d-flex align-center justify-space-between flex-wrap ga-4 mb-6"><div class="d-flex align-center ga-4"><VAvatar color="primary" variant="tonal" rounded size="58"><VIcon icon="tabler-bell" size="30"/></VAvatar><div><div class="process-kicker">Centro de actividad</div><h1 class="text-h4 font-weight-bold mb-1">Notificaciones</h1><p class="text-body-1 text-medium-emphasis mb-0">Recordatorios automáticos y próximas acciones de Caja Chica.</p></div></div><VBtn color="primary" prepend-icon="tabler-refresh" size="large" variant="tonal" :loading="loading" @click="cargar">Actualizar</VBtn></section>
 
     <VAlert v-if="error" type="error" variant="tonal" class="mb-4">{{ error }}</VAlert>
 
@@ -62,10 +55,10 @@ onMounted(cargar)
 
     <VRow>
       <VCol v-for="notificacion in notificaciones" :key="notificacion.id" cols="12" md="6">
-        <VCard :border="notificacion.activa" :color="notificacion.activa ? notificacion.tipo : undefined">
+        <VCard class="notification-card h-100" :class="{ 'notification-card--active': notificacion.activa }">
           <VCardText class="d-flex gap-4">
             <VAvatar :color="notificacion.tipo" variant="tonal" rounded size="46">
-              <VIcon :icon="notificacion.id === 'revision-caja' ? 'ri-clipboard-line' : 'ri-bank-card-line'" size="26" />
+              <VIcon :icon="notificacion.id === 'revision-caja' ? 'tabler-clipboard' : 'tabler-credit-card'" size="26" />
             </VAvatar>
             <div>
               <h5 class="text-h5 mb-1">{{ notificacion.titulo }}</h5>

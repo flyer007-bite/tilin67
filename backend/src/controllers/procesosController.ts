@@ -1,5 +1,4 @@
 import { Request, Response } from 'express'
-import jwt from 'jsonwebtoken'
 import crypto from 'node:crypto'
 import { RowDataPacket, ResultSetHeader } from 'mysql2'
 import type { PoolConnection } from 'mysql2/promise'
@@ -9,11 +8,8 @@ type Tipo = 'arqueo' | 'cierre' | 'liquidacion'
 const centavos = (valor: unknown) => Math.round(Number(valor || 0) * 100)
 const dinero = (valor: number) => (valor / 100).toFixed(2)
 const usuarioSesion = (req: Request) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '')
-  if (!token) throw new Error('AUTH')
-  const data = jwt.verify(token, process.env.JWT_SECRET || 'secret') as { id: number }
-  if (!Number.isInteger(data.id)) throw new Error('AUTH')
-  return data.id
+  if (!req.auth?.id) throw new Error('AUTH')
+  return req.auth.id
 }
 const responder = (res: Response, error: unknown) => {
   const message = error instanceof Error ? error.message : 'Error de proceso.'
@@ -21,15 +17,17 @@ const responder = (res: Response, error: unknown) => {
   res.status(status).json({ message: message === 'AUTH' ? 'Sesión inválida.' : message })
 }
 
-const resumen = async (fondoId: number, connection: typeof db | PoolConnection = db) => {
-  const [fondos] = await connection.query<RowDataPacket[]>('SELECT * FROM fondos_caja WHERE id = ?', [fondoId])
+const resumen = async (fondoId: number, connection: typeof db | PoolConnection = db, auth?: Request['auth']) => {
+  const scope = auth?.esAdministradorGlobal ? ' AND empresa_id IS NOT NULL AND departamento_id IS NOT NULL' : ' AND empresa_id=? AND departamento_id=?'
+  const params = auth?.esAdministradorGlobal ? [fondoId] : [fondoId, auth?.empresaId, auth?.departamentoId]
+  const [fondos] = await connection.query<RowDataPacket[]>(`SELECT * FROM fondos_caja WHERE id=?${scope}`, params)
   if (!fondos.length) throw new Error('El fondo no existe.')
   const fondo = fondos[0]
   const [ingresos] = await connection.query<RowDataPacket[]>(`SELECT id, monto, tipo_ingreso, fecha FROM ingresos WHERE fondo_id=? AND estado='activo'`, [fondoId])
   const [gastos] = await connection.query<RowDataPacket[]>(`SELECT g.id,g.monto,g.numero_comprobante,g.serie_comprobante,g.fecha_comprobante,g.motivo_gasto,g.estado,tc.nombre tipo_comprobante,p.nombre proveedor,
     COALESCE(tg.tipos_gasto,'Sin categoría') categoria FROM gastos g LEFT JOIN tipos_comprobante tc ON tc.id=g.tipo_comprobante_id LEFT JOIN proveedores p ON p.id=g.proveedor_id
     LEFT JOIN (SELECT gtg.gasto_id,GROUP_CONCAT(t.nombre SEPARATOR ', ') tipos_gasto FROM gasto_tipos_gasto gtg JOIN tipos_gasto t ON t.id=gtg.tipo_gasto_id GROUP BY gtg.gasto_id) tg ON tg.gasto_id=g.id
-    WHERE g.fondo_id=? AND g.estado IN ('pendiente','aprobado')`, [fondoId])
+    WHERE g.fondo_id=? AND g.estado='aprobado'`, [fondoId])
   const [reintegros] = await connection.query<RowDataPacket[]>(`SELECT COALESCE(SUM(r.monto_reembolsado),0) monto FROM reembolsos_gasto r JOIN gastos g ON g.id=r.gasto_id WHERE g.fondo_id=? AND r.estado='procesado'`, [fondoId])
   const montoInicial = centavos(fondo.monto_inicial)
   const asignaciones = ingresos.filter(i => String(i.tipo_ingreso).toLowerCase() === 'asignación inicial' || String(i.tipo_ingreso).toLowerCase() === 'asignacion inicial')
@@ -43,11 +41,11 @@ const resumen = async (fondoId: number, connection: typeof db | PoolConnection =
   return { fondo, ingresos, gastos, montoInicial, adicionales, reintegros: reintegrosC, gastosC, fondoComprobar, saldoLibros: fondoComprobar - gastosC, huella }
 }
 
-export const fondos = async (_req: Request, res: Response) => {
-  const [rows] = await db.query<RowDataPacket[]>(`SELECT id,mes,anio,monto_inicial,numero_cheque,estado FROM fondos_caja ORDER BY anio DESC,mes DESC,id DESC`)
+export const fondos = async (req: Request, res: Response) => {
+  const [rows] = await db.query<RowDataPacket[]>(`SELECT id,mes,anio,monto_inicial,numero_cheque,estado FROM fondos_caja WHERE empresa_id IS NOT NULL AND departamento_id IS NOT NULL AND (?=1 OR (empresa_id=? AND departamento_id=?)) ORDER BY anio DESC,mes DESC,id DESC`, [req.auth?.esAdministradorGlobal ? 1 : 0, req.auth?.empresaId, req.auth?.departamentoId])
   res.json(rows)
 }
-export const obtenerResumen = async (req: Request, res: Response) => { try { res.json(await resumen(Number(req.params.id))) } catch (e) { responder(res, e) } }
+export const obtenerResumen = async (req: Request, res: Response) => { try { res.json(await resumen(Number(req.params.id), db, req.auth)) } catch (e) { responder(res, e) } }
 
 export const guardarArqueo = async (req: Request, res: Response) => {
   let c
@@ -61,7 +59,7 @@ export const guardarArqueo = async (req: Request, res: Response) => {
     const bancos = centavos(cuentas_bancarias); if (bancos < 0 || !Number.isFinite(bancos)) throw new Error('Cuentas bancarias inválidas.')
     c = await db.getConnection(); await c.beginTransaction()
     const [repetidos] = await c.query<RowDataPacket[]>(`SELECT proceso_id FROM procesos_detalles WHERE tipo='arqueo' AND solicitud_id=?`, [solicitud_id]); if (repetidos.length) { await c.rollback(); res.json({ id: repetidos[0].proceso_id, repetido: true }); return }
-    await c.query('SELECT id FROM fondos_caja WHERE id=? FOR UPDATE', [fondo_id]); const r = await resumen(fondo_id, c)
+    await c.query('SELECT id FROM fondos_caja WHERE id=? AND empresa_id IS NOT NULL AND departamento_id IS NOT NULL AND (?=1 OR (empresa_id=? AND departamento_id=?)) FOR UPDATE', [fondo_id,req.auth?.esAdministradorGlobal?1:0,req.auth?.empresaId,req.auth?.departamentoId]); const r = await resumen(fondo_id, c, req.auth)
     if (r.fondo.estado !== 'activo') throw new Error('El fondo no está activo.')
     if (!Array.isArray(comprobantes) || comprobantes.length !== r.gastos.length) throw new Error('Debes verificar todos los comprobantes vigentes.')
     const ids = new Set<number>(); const categorias = ['factura', 'recibo', 'vale', 'liquidacion_tramite']; let totalComp = 0
@@ -85,7 +83,7 @@ export const guardarCierre = async (req: Request, res: Response) => {
     if (!Number.isInteger(fondo_id) || !solicitud_id) throw new Error('Datos de cierre inválidos.')
     c = await db.getConnection(); await c.beginTransaction()
     const [existente] = await c.query<RowDataPacket[]>(`SELECT proceso_id FROM procesos_detalles WHERE tipo='cierre' AND solicitud_id=?`, [solicitud_id]); if (existente.length) { await c.rollback(); res.json({ id: existente[0].proceso_id, repetido: true }); return }
-    await c.query('SELECT id FROM fondos_caja WHERE id=? FOR UPDATE', [fondo_id]); const r = await resumen(fondo_id, c)
+    await c.query('SELECT id FROM fondos_caja WHERE id=? AND empresa_id IS NOT NULL AND departamento_id IS NOT NULL AND (?=1 OR (empresa_id=? AND departamento_id=?)) FOR UPDATE', [fondo_id,req.auth?.esAdministradorGlobal?1:0,req.auth?.empresaId,req.auth?.departamentoId]); const r = await resumen(fondo_id, c, req.auth)
     if (r.fondo.estado !== 'activo') throw new Error('El fondo no está activo.')
     const [arqueos] = await c.query<RowDataPacket[]>(`SELECT * FROM arqueos WHERE fondo_id=? ORDER BY fecha_arqueo DESC,id DESC LIMIT 1`, [fondo_id]); if (!arqueos.length) throw new Error('Debes guardar un arqueo antes de cerrar.')
     const a = arqueos[0]; if (centavos(a.diferencia) !== 0) throw new Error('No se puede cerrar un fondo con diferencia de arqueo.')
@@ -106,7 +104,7 @@ export const guardarLiquidacion = async (req: Request, res: Response) => {
     const usuario=usuarioSesion(req); const { fondo_id,solicitud_id,monto_remanente,receptor_nombre,comprobante_entrega,observaciones='' }=req.body
     if (!Number.isInteger(fondo_id)||!solicitud_id||!String(receptor_nombre).trim()||!String(comprobante_entrega).trim()) throw new Error('Completa los datos de liquidación.')
     c=await db.getConnection(); await c.beginTransaction(); const [dup]=await c.query<RowDataPacket[]>(`SELECT proceso_id FROM procesos_detalles WHERE tipo='liquidacion' AND solicitud_id=?`,[solicitud_id]); if(dup.length){await c.rollback();res.json({id:dup[0].proceso_id,repetido:true});return}
-    await c.query('SELECT id FROM fondos_caja WHERE id=? FOR UPDATE',[fondo_id]); const r=await resumen(fondo_id,c); if(r.fondo.estado!=='cerrado') throw new Error('El fondo debe estar cerrado.')
+    await c.query('SELECT id FROM fondos_caja WHERE id=? AND empresa_id IS NOT NULL AND departamento_id IS NOT NULL AND (?=1 OR (empresa_id=? AND departamento_id=?)) FOR UPDATE',[fondo_id,req.auth?.esAdministradorGlobal?1:0,req.auth?.empresaId,req.auth?.departamentoId]); const r=await resumen(fondo_id,c,req.auth); if(r.fondo.estado!=='cerrado') throw new Error('El fondo debe estar cerrado.')
     const [cs]=await c.query<RowDataPacket[]>(`SELECT * FROM cierres WHERE fondo_id=? AND estado='cerrado' ORDER BY fecha_cierre DESC LIMIT 1`,[fondo_id]); if(!cs.length) throw new Error('No existe un cierre válido.'); const cierre=cs[0]
     if(cierre.huella_movimientos!==r.huella) throw new Error('Los movimientos cambiaron después del cierre.'); if(centavos(monto_remanente)!==centavos(cierre.saldo_final)) throw new Error('El remanente debe coincidir exactamente con el saldo del cierre.')
     const [ya]=await c.query<RowDataPacket[]>(`SELECT id FROM liquidaciones WHERE fondo_id=? AND estado='liquidado'`,[fondo_id]);if(ya.length)throw new Error('El fondo ya fue liquidado.')
@@ -116,7 +114,32 @@ export const guardarLiquidacion = async (req: Request, res: Response) => {
 }
 
 export const historial = async (req: Request, res: Response) => {
-  try { const tipo = req.params.tipo as Tipo; if (!['arqueo', 'cierre', 'liquidacion'].includes(tipo)) throw new Error('Tipo inválido.'); const page = Math.max(1, Number(req.query.page) || 1); const fondo = Number(req.query.fondo_id) || 0; const [rows] = await db.query<RowDataPacket[]>(`SELECT pd.proceso_id id,pd.fondo_id,pd.creado_en,pd.datos_json,pd.huella_movimientos,u.nombre_completo usuario FROM procesos_detalles pd LEFT JOIN usuarios u ON u.id=pd.usuario_id WHERE pd.tipo=? ${fondo ? 'AND pd.fondo_id=?' : ''} ORDER BY pd.creado_en DESC LIMIT 20 OFFSET ?`, fondo ? [tipo, fondo, (page - 1) * 20] : [tipo, (page - 1) * 20]); const [count] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) total FROM procesos_detalles WHERE tipo=? ${fondo ? 'AND fondo_id=?' : ''}`, fondo ? [tipo, fondo] : [tipo]); res.json({ rows, page, total: count[0].total }) } catch (e) { responder(res, e) }
+  try {
+    const tipo = req.params.tipo as Tipo
+    if (!['arqueo', 'cierre', 'liquidacion'].includes(tipo)) throw new Error('Tipo inválido.')
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const fondo = Number(req.query.fondo_id) || 0
+    const scope = req.auth?.esAdministradorGlobal ? ' AND f.empresa_id IS NOT NULL AND f.departamento_id IS NOT NULL' : ' AND f.empresa_id=? AND f.departamento_id=?'
+    const baseParams: Array<string | number | null> = [tipo]
+    if (fondo) baseParams.push(fondo)
+    if (!req.auth?.esAdministradorGlobal) baseParams.push(req.auth?.empresaId || null, req.auth?.departamentoId || null)
+    const filtroFondo = fondo ? ' AND pd.fondo_id=?' : ''
+    const [rows] = await db.query<RowDataPacket[]>(`SELECT pd.proceso_id id,pd.fondo_id,pd.creado_en,pd.datos_json,pd.huella_movimientos,u.nombre_completo usuario FROM procesos_detalles pd JOIN fondos_caja f ON f.id=pd.fondo_id LEFT JOIN usuarios u ON u.id=pd.usuario_id WHERE pd.tipo=?${filtroFondo}${scope} ORDER BY pd.creado_en DESC LIMIT 20 OFFSET ?`, [...baseParams, (page - 1) * 20])
+    const [count] = await db.query<RowDataPacket[]>(`SELECT COUNT(*) total FROM procesos_detalles pd JOIN fondos_caja f ON f.id=pd.fondo_id WHERE pd.tipo=?${filtroFondo}${scope}`, baseParams)
+    res.json({ rows, page, total: Number(count[0].total) })
+  } catch (e) { responder(res, e) }
 }
 
-export const detalle = async (req: Request, res: Response) => { try { const tipo = req.params.tipo as Tipo; const [rows] = await db.query<RowDataPacket[]>(`SELECT * FROM procesos_detalles WHERE tipo=? AND proceso_id=?`, [tipo, Number(req.params.id)]); if (!rows.length) throw new Error('Detalle no disponible.'); res.json(rows[0]) } catch (e) { responder(res, e) } }
+export const detalle = async (req: Request, res: Response) => {
+  try {
+    const tipo = req.params.tipo as Tipo
+    if (!['arqueo', 'cierre', 'liquidacion'].includes(tipo)) throw new Error('Tipo inválido.')
+    const scope = req.auth?.esAdministradorGlobal ? ' AND f.empresa_id IS NOT NULL AND f.departamento_id IS NOT NULL' : ' AND f.empresa_id=? AND f.departamento_id=?'
+    const params = req.auth?.esAdministradorGlobal
+      ? [tipo, Number(req.params.id)]
+      : [tipo, Number(req.params.id), req.auth?.empresaId, req.auth?.departamentoId]
+    const [rows] = await db.query<RowDataPacket[]>(`SELECT pd.* FROM procesos_detalles pd JOIN fondos_caja f ON f.id=pd.fondo_id WHERE pd.tipo=? AND pd.proceso_id=?${scope} LIMIT 1`, params)
+    if (!rows.length) throw new Error('Detalle no disponible.')
+    res.json(rows[0])
+  } catch (e) { responder(res, e) }
+}

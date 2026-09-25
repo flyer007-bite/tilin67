@@ -21,7 +21,12 @@ const resumen = ref<Resumen | null>(null)
 const loading = ref(false)
 const error = ref('')
 const userData = useCookie<Record<string, any> | null>('userData')
+const abilityRules = useCookie<Array<{ action: string; subject: string }> | null>('userAbilityRules')
 const esOperador = computed(() => String(userData.value?.role || '').toLowerCase() === 'operador caja chica')
+const esAdmin = computed(() => ['admin', 'administrador'].includes(String(userData.value?.role || '').toLowerCase()))
+const puede = (subject: string, action = 'crear') => esAdmin.value || (abilityRules.value || []).some(rule =>
+  (rule.subject === subject || rule.subject === 'all') && (rule.action === action || rule.action === 'manage'),
+)
 const anioSeleccionado = ref(new Date().getFullYear())
 const mesSeleccionado = ref<number | null>(null)
 const aniosHasta2030 = Array.from({ length: 2030 - 2020 + 1 }, (_, index) => 2020 + index).reverse()
@@ -122,6 +127,17 @@ onMounted(cargarDashboard)
     </div>
 
     <VAlert v-if="error" type="error" variant="tonal" class="mb-6">{{ error }}</VAlert>
+    <VAlert v-if="resumen && porcentajeEgresos >= 80" :type="porcentajeEgresos >= 95 ? 'error' : 'warning'" variant="tonal" prominent class="mb-6"><VAlertTitle>Atención al presupuesto</VAlertTitle>Se ha utilizado el {{ porcentajeEgresos }}% de los fondos disponibles. Revisa los gastos antes de registrar nuevos movimientos.</VAlert>
+
+    <section class="quick-actions mb-6">
+      <div class="d-flex align-center justify-space-between mb-3"><div><div class="process-kicker">Accesos directos</div><h2 class="text-h5 mb-0">¿Qué deseas hacer?</h2></div></div>
+      <VRow>
+        <VCol v-if="puede('gastos')" cols="12" sm="6" lg="3"><VCard :to="{ name: 'gastos', query: { nuevo: '1' } }" class="quick-action-card h-100"><VCardText><VAvatar color="error" variant="tonal" rounded><VIcon icon="tabler-receipt"/></VAvatar><div><strong>Nuevo gasto</strong><span>Registrar manualmente</span></div><VIcon icon="tabler-chevron-right"/></VCardText></VCard></VCol>
+        <VCol v-if="puede('gastos')" cols="12" sm="6" lg="3"><VCard :to="{ name: 'gastos', query: { nuevo: '1', escanear: '1' } }" class="quick-action-card h-100"><VCardText><VAvatar color="primary" variant="tonal" rounded><VIcon icon="tabler-scan"/></VAvatar><div><strong>Escanear factura</strong><span>Completar con una foto</span></div><VIcon icon="tabler-chevron-right"/></VCardText></VCard></VCol>
+        <VCol v-if="puede('ingresos')" cols="12" sm="6" lg="3"><VCard :to="{ name: 'ingresos', query: { nuevo: '1' } }" class="quick-action-card h-100"><VCardText><VAvatar color="success" variant="tonal" rounded><VIcon icon="tabler-cash-banknote"/></VAvatar><div><strong>Nuevo ingreso</strong><span>Agregar fondos</span></div><VIcon icon="tabler-chevron-right"/></VCardText></VCard></VCol>
+        <VCol v-if="puede('consulta', 'ver')" cols="12" sm="6" lg="3"><VCard :to="{ name: 'consulta-facturas' }" class="quick-action-card h-100"><VCardText><VAvatar color="info" variant="tonal" rounded><VIcon icon="tabler-file-search"/></VAvatar><div><strong>Buscar factura</strong><span>Consultar comprobantes</span></div><VIcon icon="tabler-chevron-right"/></VCardText></VCard></VCol>
+      </VRow>
+    </section>
 
     <VRow v-if="resumen" class="match-height">
       <VCol cols="12" md="4">

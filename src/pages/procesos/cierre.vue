@@ -11,6 +11,7 @@ const resumen = ref<Resumen | null>(null)
 const error = ref('')
 const ok = ref('')
 const loading = ref(false)
+const confirmarCierre = ref(false)
 const moneda = (centavos: number) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(Number(centavos || 0) / 100)
 const fondoSeleccionado = computed(() => fondos.value.find(item => item.id === fondoId.value))
 
@@ -23,7 +24,12 @@ const consultar = async () => {
   finally { loading.value = false }
 }
 const cerrar = async () => {
-  if (!fondoId.value || !confirm('El fondo dejará de admitir movimientos. ¿Confirmar cierre?')) return
+  if (!fondoId.value) return
+  confirmarCierre.value = true
+}
+const ejecutarCierre = async () => {
+  if (!fondoId.value) return
+  confirmarCierre.value = false
   loading.value = true; error.value = ''
   try {
     const result = await apiProcesos('/cierre', { method: 'POST', body: JSON.stringify({ fondo_id: fondoId.value, solicitud_id: solicitudId(), observaciones: observaciones.value }) })
@@ -67,5 +73,7 @@ onMounted(async () => { try { fondos.value = (await apiProcesos('/fondos')).filt
         <VCard class="process-card h-100"><VCardItem><VCardTitle>Lista de verificación</VCardTitle></VCardItem><VCardText><div v-for="item in ['Arqueo guardado sin diferencias','Sin movimientos posteriores','Sin reservas activas','Saldo contable no negativo']" :key="item" class="process-check"><VIcon icon="tabler-circle-check" color="success" size="20" /><span>{{ item }}</span></div><VAlert color="warning" variant="tonal" class="mt-5">El cierre es una operación sensible y quedará registrado para auditoría.</VAlert></VCardText></VCard>
       </VCol>
     </VRow>
+    <AppConfirmDialog v-model="confirmarCierre" title="Confirmar cierre de caja" message="El fondo dejará de admitir movimientos y la operación quedará registrada para auditoría." color="warning" confirm-text="Cerrar fondo" :loading="loading" @confirm="ejecutarCierre"/>
+    <VSnackbar :model-value="!!ok" color="success" location="top end" timeout="3500" @update:model-value="value => { if (!value) ok = '' }">{{ ok }}</VSnackbar>
   </div>
 </template>

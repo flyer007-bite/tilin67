@@ -64,6 +64,7 @@ app.use('/api/tipos-comprobante', tiposComprobanteRoutes)
 app.use('/api/tipos-gasto', tiposGastoRoutes)
 app.use('/api', (_req, res) => res.status(404).json({ message: 'Endpoint no encontrado.' }))
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if ((error as { code?: string })?.code === 'LIMIT_FILE_SIZE') { res.status(400).json({ message: 'La factura no puede superar 12 MB.' }); return }
   console.error('Error no controlado en API:', error)
   res.status(500).json({ message: 'Error interno del servidor.' })
 })

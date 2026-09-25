@@ -52,6 +52,15 @@ const escaneandoFactura = ref(false)
 const progresoEscaneo = ref(0)
 const mensajeEscaneo = ref('')
 const camposDetectados = ref<string[]>([])
+const busqueda = ref('')
+const filtroEstado = ref<string | null>(null)
+const filtroProveedor = ref<number | null>(null)
+const route = useRoute()
+const confirmacion = ref({ visible: false, titulo: '', mensaje: '', color: 'primary', accion: null as null | (() => Promise<void>) })
+const gastoDetalle = ref<Gasto | null>(null)
+const auditoriaDetalle = ref<Array<{ id: number; accion: string; creado_en: string; usuario: string }>>([])
+const cargandoDetalle = ref(false)
+const advertenciaDuplicado = ref('')
 
 const userData = useCookie<Record<string, any> | null>('userData')
 const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
@@ -100,6 +109,20 @@ const headers = [
   { title: 'Estado', key: 'estado' },
   { title: 'Acciones', key: 'actions', sortable: false },
 ]
+const gastosFiltrados = computed(() => gastos.value.filter(gasto => {
+  const texto = normalizar(`${gasto.numero_comprobante} ${gasto.serie_comprobante || ''} ${gasto.proveedor_nombre} ${gasto.persona_realizo_gasto} ${gasto.motivo_gasto} ${gasto.tipos_gasto || ''}`)
+  return (!busqueda.value.trim() || texto.includes(normalizar(busqueda.value.trim())))
+    && (!filtroEstado.value || gasto.estado === filtroEstado.value)
+    && (!filtroProveedor.value || gasto.proveedor_id === filtroProveedor.value)
+}))
+const filtrosActivos = computed(() => Number(Boolean(busqueda.value.trim())) + Number(Boolean(filtroEstado.value)) + Number(Boolean(filtroProveedor.value)))
+const gastosPendientes = computed(() => gastos.value.filter(item => item.estado === 'pendiente'))
+const limpiarFiltros = () => { busqueda.value = ''; filtroEstado.value = null; filtroProveedor.value = null; pagina.value = 1 }
+const progresoFormulario = computed(() => {
+  const form = nuevoGasto.value
+  const completos = [form.fondo_id, form.persona_realizo_gasto_id, form.tipo_comprobante_id, form.numero_comprobante.trim(), form.fecha_comprobante, form.proveedor_id, form.tipo_gasto_id, montoConDosDecimales(form.monto), form.motivo_gasto.trim()].filter(Boolean).length
+  return Math.round((completos / 9) * 100)
+})
 
 const getError = (error: any, fallback: string) => error?.data?.message || error?.message || fallback
 const montoConDosDecimales = (value: unknown) => {
@@ -273,6 +296,39 @@ const abrirDialogo = () => {
   isDialogVisible.value = true
 }
 
+const verDetalle = async (gasto: Gasto) => {
+  gastoDetalle.value = gasto
+  auditoriaDetalle.value = []
+  cargandoDetalle.value = true
+  try { auditoriaDetalle.value = await $api(`/gastos/${gasto.id}/auditoria`) }
+  catch { auditoriaDetalle.value = [] }
+  finally { cargandoDetalle.value = false }
+}
+const abrirDetalleFila = (_event: Event, data: { item: Gasto }) => verDetalle(data.item)
+
+const duplicarGasto = (gasto: Gasto) => {
+  limpiarFormulario()
+  const tipo = tiposGasto.value.find(item => (gasto.tipos_gasto || '').includes(item.title))
+  nuevoGasto.value = { ...nuevoGasto.value, fondo_id: gasto.fondo_id, tipo_comprobante_id: gasto.tipo_comprobante_id, serie_comprobante: gasto.serie_comprobante || '', fecha_comprobante: fechaLocal(), proveedor_id: gasto.proveedor_id, persona_realizo_gasto_id: gasto.persona_realizo_gasto_id, monto: Number(gasto.monto), motivo_gasto: gasto.motivo_gasto, observaciones: gasto.observaciones || '', tipo_gasto_id: tipo?.value || null }
+  gastoDetalle.value = null
+  isDialogVisible.value = true
+  mensajeEscaneo.value = 'Se copiaron los datos. Ingresa un nuevo número de comprobante y revisa la información.'
+}
+
+const verificarDuplicado = async () => {
+  advertenciaDuplicado.value = ''
+  const numero = nuevoGasto.value.numero_comprobante.trim()
+  if (!numero) return
+  const params = new URLSearchParams({ numero_comprobante: numero })
+  if (nuevoGasto.value.serie_comprobante.trim()) params.set('serie_comprobante', nuevoGasto.value.serie_comprobante.trim())
+  try {
+    const coincidencias = await $api<Gasto[]>(`/gastos?${params}`)
+    const duplicado = coincidencias.find(item => !nuevoGasto.value.proveedor_id || item.proveedor_id === nuevoGasto.value.proveedor_id)
+    if (duplicado) advertenciaDuplicado.value = `Ya existe el gasto #${duplicado.id} con este comprobante y proveedor.`
+  }
+  catch { /* La validación definitiva también se ejecuta en el servidor al guardar. */ }
+}
+
 const guardarGasto = async () => {
   errorMessage.value = ''
   successMessage.value = ''
@@ -291,6 +347,12 @@ const guardarGasto = async () => {
 
   loading.value = true
   try {
+    if (facturaArchivo.value && !form.documento_url) {
+      const datos = new FormData()
+      datos.append('factura', facturaArchivo.value)
+      const documento = await $api<{ url: string }>('/gastos/documentos', { method: 'POST', body: datos })
+      form.documento_url = documento.url
+    }
     await $api('/gastos', {
       method: 'POST',
       body: {
@@ -330,7 +392,10 @@ const actualizarEstado = async (gasto: Gasto, estado: 'aprobado' | 'rechazado') 
     return
   }
   const accion = estado === 'aprobado' ? 'aprobar' : 'rechazar'
-  if (!confirm(`¿Deseas ${accion} el gasto #${gasto.id}?`)) return
+  confirmacion.value = { visible: true, titulo: `${estado === 'aprobado' ? 'Aprobar' : 'Rechazar'} gasto`, mensaje: `¿Deseas ${accion} el gasto #${gasto.id} por ${formatoMoneda(gasto.monto)}?`, color: estado === 'aprobado' ? 'success' : 'warning', accion: () => ejecutarEstado(gasto, estado) }
+}
+
+const ejecutarEstado = async (gasto: Gasto, estado: 'aprobado' | 'rechazado') => {
   loading.value = true
   try {
     const result = await $api<{ message: string }>(`/gastos/${gasto.id}/estado`, { method: 'PATCH', body: { estado } })
@@ -346,7 +411,11 @@ const actualizarEstado = async (gasto: Gasto, estado: 'aprobado' | 'rechazado') 
 }
 
 const eliminarGasto = async (id: number) => {
-  if (!confirm('¿Estás seguro de eliminar este gasto pendiente?')) return
+  const gasto = gastos.value.find(item => item.id === id)
+  confirmacion.value = { visible: true, titulo: 'Eliminar gasto', mensaje: `Esta acción eliminará el gasto #${id}${gasto ? ` por ${formatoMoneda(gasto.monto)}` : ''}. No se puede deshacer.`, color: 'error', accion: () => ejecutarEliminacion(id) }
+}
+
+const ejecutarEliminacion = async (id: number) => {
   loading.value = true
   try {
     const result = await $api<{ message: string }>(`/gastos/${id}`, { method: 'DELETE' })
@@ -361,6 +430,13 @@ const eliminarGasto = async (id: number) => {
   }
 }
 
+const confirmarAccion = async () => {
+  const accion = confirmacion.value.accion
+  confirmacion.value.visible = false
+  confirmacion.value.accion = null
+  if (accion) await accion()
+}
+
 const formatoMoneda = (valor: number) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(Number(valor))
 const formatoFecha = (fecha: string) => {
   if (!fecha) return ''
@@ -371,6 +447,10 @@ const colorEstado = (estado: string) => estado === 'aprobado' ? 'success' : esta
 
 onMounted(async () => {
   await Promise.all([cargarGastos(), cargarCatalogos()])
+  if (puedeCrear.value && route.query.nuevo === '1') {
+    abrirDialogo()
+    if (route.query.escanear === '1') mensajeEscaneo.value = 'Selecciona o toma una foto para comenzar.'
+  }
 })
 </script>
 
@@ -401,7 +481,12 @@ onMounted(async () => {
 
         <AppErrorAlert v-model="errorMessage" />
 
-        <div class="d-flex justify-end mb-4">
+        <div class="expense-filters mb-5">
+          <div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-3"><div class="d-flex align-center ga-2"><VIcon icon="tabler-filter" color="primary"/><strong>Buscar y filtrar</strong><VChip v-if="filtrosActivos" size="x-small" color="primary">{{ filtrosActivos }}</VChip></div><VBtn v-if="filtrosActivos" variant="text" size="small" prepend-icon="tabler-filter-x" @click="limpiarFiltros">Limpiar filtros</VBtn></div>
+          <VRow align="center"><VCol cols="12" md="5"><VTextField v-model="busqueda" label="Buscar factura, motivo o persona" prepend-inner-icon="tabler-search" clearable hide-details @update:model-value="pagina = 1"/></VCol><VCol cols="12" sm="6" md="3"><VSelect v-model="filtroEstado" :items="['pendiente','aprobado','rechazado']" label="Estado" prepend-inner-icon="tabler-status-change" clearable hide-details @update:model-value="pagina = 1"/></VCol><VCol cols="12" sm="6" md="4"><VSelect v-model="filtroProveedor" :items="proveedores" item-title="nombre" item-value="id" label="Proveedor" prepend-inner-icon="tabler-building-store" clearable hide-details @update:model-value="pagina = 1"/></VCol></VRow>
+        </div>
+        <VAlert v-if="puedeAprobar && gastosPendientes.length" color="warning" variant="tonal" icon="tabler-clock-exclamation" class="mb-5"><div class="d-flex align-center justify-space-between flex-wrap ga-2"><span><strong>{{ gastosPendientes.length }} gasto{{ gastosPendientes.length === 1 ? '' : 's' }} pendiente{{ gastosPendientes.length === 1 ? '' : 's' }}</strong> de revisión.</span><VBtn size="small" color="warning" variant="flat" @click="filtroEstado = 'pendiente'">Ver pendientes</VBtn></div></VAlert>
+        <div class="d-flex align-center justify-space-between flex-wrap ga-3 mb-4"><span class="text-medium-emphasis">{{ gastosFiltrados.length }} de {{ gastos.length }} gastos</span>
           <VBtn
             v-if="puedeCrear"
             color="primary"
@@ -417,10 +502,11 @@ onMounted(async () => {
           v-model:items-per-page="numberPageSize"
           v-model:sort-by="orden"
           :headers="headers"
-          :items="gastos"
+          :items="gastosFiltrados"
           :loading="loading"
           item-value="id"
           class="text-no-wrap product-table"
+          @click:row="abrirDetalleFila"
         >
           <template #item.id="{ index }">{{ rowNumber(index) }}</template>
           <template
@@ -495,7 +581,7 @@ onMounted(async () => {
               size="small"
               title="Aprobar gasto"
               aria-label="Aprobar gasto"
-              @click="actualizarEstado(item, 'aprobado')"
+              @click.stop="actualizarEstado(item, 'aprobado')"
             >
               <VIcon icon="tabler-check" />
             </VBtn>
@@ -507,7 +593,7 @@ onMounted(async () => {
               size="small"
               title="Rechazar gasto"
               aria-label="Rechazar gasto"
-              @click="actualizarEstado(item, 'rechazado')"
+              @click.stop="actualizarEstado(item, 'rechazado')"
             >
               <VIcon icon="tabler-x" />
             </VBtn>
@@ -530,7 +616,7 @@ onMounted(async () => {
               size="small"
               title="Eliminar gasto"
               aria-label="Eliminar gasto"
-              @click="
+              @click.stop="
                 eliminarGasto(item.id)
               "
             >
@@ -601,7 +687,7 @@ onMounted(async () => {
             </VRow>
           </section>
           <VDivider class="mb-6" />
-          <div class="d-flex align-center ga-2 mb-4"><VIcon icon="tabler-pencil" color="primary"/><h3 class="text-h5 mb-0">Datos del gasto</h3><VChip size="small" variant="tonal">Editables</VChip></div>
+          <div class="form-progress mb-5"><div class="d-flex align-center justify-space-between mb-2"><div class="d-flex align-center ga-2"><VIcon icon="tabler-pencil" color="primary"/><h3 class="text-h5 mb-0">Datos del gasto</h3><VChip size="small" variant="tonal">Editables</VChip></div><strong>{{ progresoFormulario }}%</strong></div><VProgressLinear :model-value="progresoFormulario" :color="progresoFormulario === 100 ? 'success' : 'primary'" height="8" rounded/><p class="text-caption text-medium-emphasis mt-2 mb-0">{{ progresoFormulario === 100 ? 'Información completa. Ya puedes guardar el gasto.' : 'Completa los campos marcados con * para continuar.' }}</p></div>
           <VRow>
             <VCol cols="12" md="6">
               <VSelect
@@ -672,8 +758,10 @@ onMounted(async () => {
                 label="Número de comprobante *"
                 placeholder="Ej. 00125"
                 maxlength="100"
+                @blur="verificarDuplicado"
               />
             </VCol>
+            <VCol v-if="advertenciaDuplicado" cols="12"><VAlert type="warning" variant="tonal" icon="tabler-copy">{{ advertenciaDuplicado }}</VAlert></VCol>
 
             <VCol
               cols="12"
@@ -803,5 +891,13 @@ onMounted(async () => {
         </VCardActions>
       </VCard>
     </VDialog>
+
+    <VDialog :model-value="!!gastoDetalle" max-width="720" @update:model-value="value => { if (!value) gastoDetalle = null }"><VCard v-if="gastoDetalle" class="expense-detail"><VCardItem class="module-header"><VCardTitle>Gasto #{{ gastoDetalle.id }}</VCardTitle><VCardSubtitle>{{ gastoDetalle.tipo_comprobante }} · {{ gastoDetalle.serie_comprobante ? `${gastoDetalle.serie_comprobante}-` : '' }}{{ gastoDetalle.numero_comprobante }}</VCardSubtitle><template #append><VChip :color="colorEstado(gastoDetalle.estado)" variant="tonal">{{ gastoDetalle.estado }}</VChip></template></VCardItem><VCardText class="pa-6"><VRow><VCol cols="12" sm="6"><div class="detail-field"><span>Proveedor</span><strong>{{ gastoDetalle.proveedor_nombre }}</strong></div></VCol><VCol cols="12" sm="6"><div class="detail-field"><span>Monto</span><strong class="text-primary">{{ formatoMoneda(gastoDetalle.monto) }}</strong></div></VCol><VCol cols="12" sm="6"><div class="detail-field"><span>Fecha</span><strong>{{ formatoFecha(gastoDetalle.fecha_comprobante) }}</strong></div></VCol><VCol cols="12" sm="6"><div class="detail-field"><span>Realizado por</span><strong>{{ gastoDetalle.persona_realizo_gasto }}</strong></div></VCol><VCol cols="12"><div class="detail-field"><span>Motivo</span><strong>{{ gastoDetalle.motivo_gasto }}</strong></div></VCol></VRow><VBtn v-if="gastoDetalle.documento_url" :href="gastoDetalle.documento_url" target="_blank" prepend-icon="tabler-photo" variant="tonal" class="mt-4">Ver factura adjunta</VBtn><VDivider class="my-5"/><h4 class="text-h6 mb-3">Trazabilidad</h4><VProgressLinear v-if="cargandoDetalle" indeterminate/><VTimeline v-else-if="auditoriaDetalle.length" density="compact" side="end"><VTimelineItem v-for="evento in auditoriaDetalle" :key="evento.id" dot-color="primary" size="x-small"><strong>{{ evento.accion }}</strong><div class="text-caption">{{ evento.usuario || 'Sistema' }} · {{ new Date(evento.creado_en).toLocaleString('es-GT') }}</div></VTimelineItem></VTimeline><p v-else class="text-medium-emphasis">No hay eventos adicionales registrados.</p></VCardText><VCardActions class="pa-5 pt-0"><VBtn variant="tonal" @click="gastoDetalle = null">Cerrar</VBtn><VSpacer/><VBtn v-if="puedeCrear" prepend-icon="tabler-copy" @click="duplicarGasto(gastoDetalle)">Duplicar gasto</VBtn></VCardActions></VCard></VDialog>
+
+    <VDialog v-model="confirmacion.visible" max-width="440">
+      <VCard class="confirmation-card"><VCardText class="pa-7 text-center"><VAvatar :color="confirmacion.color" variant="tonal" size="64" class="mb-4"><VIcon :icon="confirmacion.color === 'error' ? 'tabler-trash' : 'tabler-help'" size="32"/></VAvatar><h3 class="text-h5 mb-2">{{ confirmacion.titulo }}</h3><p class="text-medium-emphasis mb-0">{{ confirmacion.mensaje }}</p></VCardText><VCardActions class="pa-5 pt-0"><VBtn variant="tonal" color="secondary" @click="confirmacion.visible = false">Cancelar</VBtn><VSpacer/><VBtn :color="confirmacion.color" :loading="loading" @click="confirmarAccion">Confirmar</VBtn></VCardActions></VCard>
+    </VDialog>
+
+    <VSnackbar :model-value="!!successMessage" color="success" location="top end" timeout="3500" @update:model-value="value => { if (!value) successMessage = '' }"><VIcon icon="tabler-circle-check" class="me-2"/>{{ successMessage }}<template #actions><VBtn icon="tabler-x" variant="text" @click="successMessage = ''"/></template></VSnackbar>
   </div>
 </template>

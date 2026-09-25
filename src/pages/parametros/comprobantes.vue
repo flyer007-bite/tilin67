@@ -10,8 +10,10 @@ interface TipoComprobanteTabla extends TipoComprobante { numero: number }
 
 const opcionesComprobantes = ['Factura Electrónica (FEL)', 'Recibo de Caja', 'Ticket / Voucher', 'Vale de Caja Chica', 'Factura Especial']
 const tiposComprobante = ref<TipoComprobante[]>([])
+const busqueda = ref('')
 const tiposComprobanteTabla = computed<TipoComprobanteTabla[]>(() => {
-  const ordenados = [...tiposComprobante.value].sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+  const termino = busqueda.value.trim().toLowerCase()
+  const ordenados = tiposComprobante.value.filter(item => !termino || `${item.nombre} ${item.descripcion}`.toLowerCase().includes(termino)).sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
   return ordenados.map((item, index) => ({ ...item, numero: index + 1 }))
 })
 const loading = ref(false)
@@ -19,6 +21,8 @@ const guardando = ref(false)
 const dialog = ref(false)
 const error = ref('')
 const ok = ref('')
+const confirmarEliminar = ref(false)
+const tipoAEliminar = ref<number | null>(null)
 const nuevoComprobante = ref<TipoComprobante>({ nombre: '', descripcion: '' })
 const userData = useCookie<Record<string, any> | null>('userData')
 const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
@@ -60,7 +64,14 @@ const guardarTipoComprobante = async () => {
 
 const eliminarTipoComprobante = async (id?: number) => {
   error.value = ''; ok.value = ''
-  if (!id || !confirm('¿Eliminar este tipo de comprobante? Solo puede eliminarse si no está en uso.')) return
+  if (!id) return
+  tipoAEliminar.value = id
+  confirmarEliminar.value = true
+}
+const ejecutarEliminarTipoComprobante = async () => {
+  const id = tipoAEliminar.value
+  if (!id) return
+  confirmarEliminar.value = false
   try {
     await $api(`/tipos-comprobante/${id}`, { method: 'DELETE' })
     ok.value = 'Tipo de comprobante eliminado correctamente.'
@@ -80,7 +91,9 @@ onMounted(fetchTiposComprobante)
     </div>
     <AppErrorAlert v-model="error" />
     <VAlert v-if="ok" type="success" variant="tonal" class="mb-4">{{ ok }}</VAlert>
-    <VCard class="module-card"><VCardItem class="module-header"><VCardTitle>Documentos configurados</VCardTitle><template #append><VChip color="primary" variant="tonal">{{ tiposComprobanteTabla.length }} tipos</VChip></template></VCardItem><VCardText class="pa-6"><VDataTable v-model:page="numberPage" v-model:items-per-page="numberPageSize" :headers="headers" :items="tiposComprobanteTabla" :loading="loading" class="product-table" no-data-text="No hay tipos de comprobante registrados."><template #item.numero="{ index }">{{ rowNumber(index) }}</template><template #item.nombre="{ item }"><strong>{{ item.nombre }}</strong></template><template #item.acciones="{ item }"><VBtn v-if="puedeEliminar" icon size="small" color="error" variant="tonal" title="Eliminar comprobante" aria-label="Eliminar comprobante" @click="eliminarTipoComprobante(item.id)"><VIcon icon="tabler-trash" /></VBtn></template></VDataTable></VCardText></VCard>
+    <VCard class="module-card"><VCardItem class="module-header"><VCardTitle>Documentos configurados</VCardTitle><template #append><VChip color="primary" variant="tonal">{{ tiposComprobanteTabla.length }} tipos</VChip></template></VCardItem><VCardText class="pa-6"><VTextField v-model="busqueda" label="Buscar comprobante" prepend-inner-icon="tabler-search" clearable hide-details class="mb-5"/><VDataTable v-model:page="numberPage" v-model:items-per-page="numberPageSize" :headers="headers" :items="tiposComprobanteTabla" :loading="loading" class="product-table" no-data-text="No hay tipos de comprobante registrados."><template #item.numero="{ index }">{{ rowNumber(index) }}</template><template #item.nombre="{ item }"><strong>{{ item.nombre }}</strong></template><template #item.acciones="{ item }"><VBtn v-if="puedeEliminar" icon size="small" color="error" variant="tonal" title="Eliminar comprobante" aria-label="Eliminar comprobante" @click="eliminarTipoComprobante(item.id)"><VIcon icon="tabler-trash" /></VBtn></template></VDataTable></VCardText></VCard>
     <VDialog v-model="dialog" max-width="500"><VCard title="Nuevo Tipo de Comprobante"><VCardText><VCombobox v-model="nuevoComprobante.nombre" :items="opcionesComprobantes" label="Tipo de Comprobante *" clearable class="mb-4"/><VTextarea v-model="nuevoComprobante.descripcion" label="Descripción" maxlength="500" counter /></VCardText><VCardActions class="justify-end"><VBtn variant="outlined" @click="dialog = false">Cancelar</VBtn><VBtn color="primary" :loading="guardando" @click="guardarTipoComprobante">Guardar</VBtn></VCardActions></VCard></VDialog>
+    <AppConfirmDialog v-model="confirmarEliminar" title="Eliminar comprobante" message="Solo puede eliminarse si no está en uso. Esta acción no se puede deshacer." color="error" confirm-text="Eliminar" @confirm="ejecutarEliminarTipoComprobante"/>
+    <VSnackbar :model-value="!!ok" color="success" location="top end" timeout="3500" @update:model-value="value => { if (!value) ok = '' }">{{ ok }}</VSnackbar>
   </div>
 </template>

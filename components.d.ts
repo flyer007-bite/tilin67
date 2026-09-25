@@ -11,6 +11,7 @@ declare module 'vue' {
     AppCardActions: typeof import('./src/@core/components/cards/AppCardActions.vue')['default']
     AppCardCode: typeof import('./src/@core/components/cards/AppCardCode.vue')['default']
     AppCombobox: typeof import('./src/@core/components/app-form-elements/AppCombobox.vue')['default']
+    AppConfirmDialog: typeof import('./src/@core/components/AppConfirmDialog.vue')['default']
     AppDrawerHeaderSection: typeof import('./src/@core/components/AppDrawerHeaderSection.vue')['default']
     AppErrorAlert: typeof import('./src/@core/components/AppErrorAlert.vue')['default']
     AppLoadingIndicator: typeof import('./src/components/AppLoadingIndicator.vue')['default']

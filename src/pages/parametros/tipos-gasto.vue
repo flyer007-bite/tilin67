@@ -10,8 +10,10 @@ interface TipoGastoTabla extends TipoGasto { numero: number }
 
 const opcionesGastos = ['Viáticos y Alimentación', 'Papelería y Útiles de Oficina', 'Transporte y Combustible', 'Mantenimiento y Reparaciones', 'Servicios Públicos / Mantenimiento', 'Envíos y Mensajería', 'Otros Gastos Menores']
 const tiposGasto = ref<TipoGasto[]>([])
+const busqueda = ref('')
 const tiposGastoTabla = computed<TipoGastoTabla[]>(() => {
-  const ordenados = [...tiposGasto.value].sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+  const termino = busqueda.value.trim().toLowerCase()
+  const ordenados = tiposGasto.value.filter(item => !termino || `${item.nombre} ${item.descripcion}`.toLowerCase().includes(termino)).sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
   return ordenados.map((item, index) => ({ ...item, numero: index + 1 }))
 })
 const loading = ref(false)
@@ -19,6 +21,8 @@ const guardando = ref(false)
 const dialog = ref(false)
 const error = ref('')
 const ok = ref('')
+const confirmarEliminar = ref(false)
+const tipoAEliminar = ref<number | null>(null)
 const nuevoGasto = ref<TipoGasto>({ nombre: '', descripcion: '' })
 const userData = useCookie<Record<string, any> | null>('userData')
 const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
@@ -63,7 +67,14 @@ const guardarTipoGasto = async () => {
 
 const eliminarTipoGasto = async (id?: number) => {
   error.value = ''; ok.value = ''
-  if (!id || !confirm('¿Eliminar este tipo de gasto? Esta acción solo se permite si no tiene movimientos relacionados.')) return
+  if (!id) return
+  tipoAEliminar.value = id
+  confirmarEliminar.value = true
+}
+const ejecutarEliminarTipoGasto = async () => {
+  const id = tipoAEliminar.value
+  if (!id) return
+  confirmarEliminar.value = false
   try {
     await $api(`/tipos-gasto/${id}`, { method: 'DELETE' })
     ok.value = 'Tipo de gasto eliminado correctamente.'
@@ -83,7 +94,9 @@ onMounted(fetchTiposGasto)
     </div>
     <AppErrorAlert v-model="error" />
     <VAlert v-if="ok" type="success" variant="tonal" class="mb-4">{{ ok }}</VAlert>
-    <VCard class="module-card"><VCardItem class="module-header"><VCardTitle>Catálogo de categorías</VCardTitle><template #append><VChip color="primary" variant="tonal">{{ tiposGastoTabla.length }} tipos</VChip></template></VCardItem><VCardText class="pa-6"><VDataTable v-model:page="numberPage" v-model:items-per-page="numberPageSize" :headers="headers" :items="tiposGastoTabla" :loading="loading" class="product-table" no-data-text="No hay tipos de gasto registrados."><template #item.numero="{ index }">{{ rowNumber(index) }}</template><template #item.nombre="{ item }"><strong>{{ item.nombre }}</strong></template><template #item.acciones="{ item }"><VBtn v-if="puedeEliminar" icon size="small" color="error" variant="tonal" title="Eliminar tipo de gasto" aria-label="Eliminar tipo de gasto" @click="eliminarTipoGasto(item.id)"><VIcon icon="tabler-trash" /></VBtn></template></VDataTable></VCardText></VCard>
+    <VCard class="module-card"><VCardItem class="module-header"><VCardTitle>Catálogo de categorías</VCardTitle><template #append><VChip color="primary" variant="tonal">{{ tiposGastoTabla.length }} tipos</VChip></template></VCardItem><VCardText class="pa-6"><VTextField v-model="busqueda" label="Buscar categoría" prepend-inner-icon="tabler-search" clearable hide-details class="mb-5"/><VDataTable v-model:page="numberPage" v-model:items-per-page="numberPageSize" :headers="headers" :items="tiposGastoTabla" :loading="loading" class="product-table" no-data-text="No hay tipos de gasto registrados."><template #item.numero="{ index }">{{ rowNumber(index) }}</template><template #item.nombre="{ item }"><strong>{{ item.nombre }}</strong></template><template #item.acciones="{ item }"><VBtn v-if="puedeEliminar" icon size="small" color="error" variant="tonal" title="Eliminar tipo de gasto" aria-label="Eliminar tipo de gasto" @click="eliminarTipoGasto(item.id)"><VIcon icon="tabler-trash" /></VBtn></template></VDataTable></VCardText></VCard>
     <VDialog v-model="dialog" max-width="500"><VCard title="Nuevo Tipo de Gasto"><VCardText><VCombobox v-model="nuevoGasto.nombre" :items="opcionesGastos" label="Tipo de Gasto *" clearable class="mb-4"/><VTextarea v-model="nuevoGasto.descripcion" label="Descripción" maxlength="500" counter /></VCardText><VCardActions class="justify-end"><VBtn variant="outlined" @click="dialog = false">Cancelar</VBtn><VBtn color="primary" :loading="guardando" @click="guardarTipoGasto">Guardar</VBtn></VCardActions></VCard></VDialog>
+    <AppConfirmDialog v-model="confirmarEliminar" title="Eliminar tipo de gasto" message="Solo puede eliminarse si no tiene movimientos relacionados." color="error" confirm-text="Eliminar" @confirm="ejecutarEliminarTipoGasto"/>
+    <VSnackbar :model-value="!!ok" color="success" location="top end" timeout="3500" @update:model-value="value => { if (!value) ok = '' }">{{ ok }}</VSnackbar>
   </div>
 </template>

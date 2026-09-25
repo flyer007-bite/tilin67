@@ -23,6 +23,10 @@ const ordenId = ref<'asc' | 'desc'>('asc')
 const ingresosOrdenados = computed(() => [...ingresosList.value].sort((a, b) =>
   ordenId.value === 'asc' ? Number(a.id) - Number(b.id) : Number(b.id) - Number(a.id),
 ))
+const busqueda = ref('')
+const ingresosFiltrados = computed(() => ingresosOrdenados.value.filter(item =>
+  `${item.tipo_ingreso} ${item.descripcion} ${item.usuario_nombre || ''} ${item.estado}`.toLowerCase().includes(busqueda.value.trim().toLowerCase()),
+))
 const fondos = ref<Fondo[]>([])
 const isLoadingTable = ref(false)
 const isDialogVisible = ref(false)
@@ -31,6 +35,9 @@ const isDeleting = ref(false)
 const errorMessage = ref<string | null>(null)
 const successMessage = ref<string | null>(null)
 const refVForm = ref<any>()
+const route = useRoute()
+const confirmarEliminar = ref(false)
+const ingresoAEliminar = ref<number | null>(null)
 
 const userData = useCookie<Record<string, any> | null>('userData')
 const abilityRules = useCookie<Rule[] | null>('userAbilityRules')
@@ -141,7 +148,14 @@ const registrarIngreso = async () => {
 }
 
 const eliminarIngreso = async (id: number) => {
-  if (!confirm(`¿Deseas eliminar el ingreso #${id}?`)) return
+  ingresoAEliminar.value = id
+  confirmarEliminar.value = true
+}
+
+const ejecutarEliminarIngreso = async () => {
+  if (!ingresoAEliminar.value) return
+  const id = ingresoAEliminar.value
+  confirmarEliminar.value = false
   isDeleting.value = true
   try {
     const result = await $api<{ message: string }>(`/ingresos/${id}`, { method: 'DELETE' })
@@ -158,6 +172,10 @@ const eliminarIngreso = async (id: number) => {
 
 onMounted(async () => {
   await Promise.all([fetchIngresos(), fetchFondos()])
+  if (puedeCrear.value && route.query.nuevo === '1') {
+    limpiarFormulario()
+    isDialogVisible.value = true
+  }
 })
 </script>
 
@@ -339,6 +357,7 @@ onMounted(async () => {
     <!-- TABLA -->
     <VCol cols="12">
       <VCard class="module-card">
+        <VCardText class="pb-0"><VTextField v-model="busqueda" label="Buscar ingresos" prepend-inner-icon="tabler-search" clearable hide-details /></VCardText>
         <VTable class="text-no-wrap product-table">
           <thead>
             <tr>
@@ -377,7 +396,7 @@ onMounted(async () => {
             </tr>
 
             <!-- SIN REGISTROS -->
-            <tr v-else-if="ingresosList.length === 0">
+            <tr v-else-if="ingresosFiltrados.length === 0">
               <td
                 colspan="8"
                 class="text-center py-4"
@@ -388,7 +407,7 @@ onMounted(async () => {
 
             <!-- REGISTROS -->
             <tr
-              v-for="(item, index) in isLoadingTable ? [] : ingresosOrdenados"
+              v-for="(item, index) in isLoadingTable ? [] : ingresosFiltrados"
               :key="item.id"
             >
               <td>{{ index + 1 }}</td>
@@ -453,5 +472,7 @@ onMounted(async () => {
         </VTable>
       </VCard>
     </VCol>
+    <AppConfirmDialog v-model="confirmarEliminar" title="Eliminar ingreso" :message="`¿Deseas eliminar el ingreso #${ingresoAEliminar}? Esta acción no se puede deshacer.`" color="error" confirm-text="Eliminar" :loading="isDeleting" @confirm="ejecutarEliminarIngreso" />
+    <VSnackbar :model-value="!!successMessage" color="success" location="top end" timeout="3500" @update:model-value="value => { if (!value) successMessage = null }"><VIcon icon="tabler-circle-check" class="me-2"/>{{ successMessage }}</VSnackbar>
   </VRow>
 </template>

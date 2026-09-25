@@ -6,10 +6,11 @@ import HistorialProcesos from '@/components/procesos/HistorialProcesos.vue'
 type Fondo = { id: number; mes: number; anio: number; estado: string }
 const fondos = ref<Fondo[]>([]); const fondoId = ref<number | null>(null); const resumen = ref<any>(null)
 const monto = ref<number | null>(null); const receptor = ref(''); const comprobante = ref(''); const observaciones = ref('')
-const error = ref(''); const ok = ref(''); const loading = ref(false)
+const error = ref(''); const ok = ref(''); const loading = ref(false); const confirmarLiquidacion = ref(false)
 const moneda = (valor: number) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(Number(valor || 0))
 const consultar = async () => { error.value='';ok.value='';resumen.value=null;if(!fondoId.value)return;loading.value=true;try{resumen.value=await apiProcesos(`/resumen/${fondoId.value}`);monto.value=Number(resumen.value.saldoLibros/100)}catch(e:any){error.value=e.message}finally{loading.value=false} }
-const liquidar = async () => { if(!fondoId.value||!confirm('La liquidación es definitiva. ¿Confirmar?'))return;loading.value=true;error.value='';try{const r=await apiProcesos('/liquidacion',{method:'POST',body:JSON.stringify({fondo_id:fondoId.value,solicitud_id:solicitudId(),monto_remanente:monto.value,receptor_nombre:receptor.value,comprobante_entrega:comprobante.value,observaciones:observaciones.value})});ok.value=`Liquidación #${r.id} guardada correctamente.`}catch(e:any){error.value=e.message}finally{loading.value=false} }
+const liquidar = () => { if(fondoId.value) confirmarLiquidacion.value=true }
+const ejecutarLiquidacion = async () => { if(!fondoId.value)return;confirmarLiquidacion.value=false;loading.value=true;error.value='';try{const r=await apiProcesos('/liquidacion',{method:'POST',body:JSON.stringify({fondo_id:fondoId.value,solicitud_id:solicitudId(),monto_remanente:monto.value,receptor_nombre:receptor.value,comprobante_entrega:comprobante.value,observaciones:observaciones.value})});ok.value=`Liquidación #${r.id} guardada correctamente.`}catch(e:any){error.value=e.message}finally{loading.value=false} }
 onMounted(async()=>{try{fondos.value=(await apiProcesos('/fondos')).filter((f:Fondo)=>f.estado==='cerrado')}catch(e:any){error.value=e.message}})
 </script>
 
@@ -32,5 +33,7 @@ onMounted(async()=>{try{fondos.value=(await apiProcesos('/fondos')).filter((f:Fo
       <VCol cols="12" lg="4"><VCard class="process-card h-100"><VCardItem><VCardTitle>Flujo del proceso</VCardTitle></VCardItem><VCardText><div class="process-step is-complete"><b>1</b><div><strong>Arqueo</strong><small>Validación del efectivo</small></div></div><div class="process-step is-complete"><b>2</b><div><strong>Cierre</strong><small>Bloqueo del período</small></div></div><div class="process-step is-current"><b>3</b><div><strong>Liquidación</strong><small>Entrega del remanente</small></div></div></VCardText></VCard></VCol>
       <VCol cols="12"><HistorialProcesos tipo="liquidacion" titulo="Historial de Liquidaciones" /></VCol>
     </VRow>
+    <AppConfirmDialog v-model="confirmarLiquidacion" title="Confirmar liquidación" message="Esta operación es definitiva y finalizará formalmente el fondo seleccionado." color="warning" confirm-text="Liquidar fondo" :loading="loading" @confirm="ejecutarLiquidacion"/>
+    <VSnackbar :model-value="!!ok" color="success" location="top end" timeout="3500" @update:model-value="value => { if (!value) ok = '' }">{{ ok }}</VSnackbar>
   </div>
 </template>

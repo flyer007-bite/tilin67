@@ -45,3 +45,4 @@ public/mockServiceWorker.js
 # Datos locales y credenciales de desarrollo
 credenciales-por-departamento.txt
 backups/
+backend/uploads/
